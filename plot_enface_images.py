@@ -116,7 +116,7 @@ def enface(OCT, nsOCT, do_plot, do_save):
             Num_B_frames = len(processing_B_frames)
 
             processing_A_lines = np.arange(A_lines_to_process[0], A_lines_to_process[1] + 1)
-            num_A_lines_processed = len(processing_A_lines)j
+            num_A_lines_processed = len(processing_A_lines)
 
             three_d_OCT = OCT
             three_d_nsOCT = nsOCT
