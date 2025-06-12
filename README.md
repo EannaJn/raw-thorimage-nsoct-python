@@ -11,3 +11,4 @@ it from the Fourier domain to image domain, and map each voxel of the 2D image. 
 - Find the mean and standard deviation of mean values for each B-frame and en-face images
 - Plot histograms, depth plots, and flattended plot of entire data
 - Dictionary of parameters and main program scripts
+- A windowing script that contains various different window functions for OCT processing
