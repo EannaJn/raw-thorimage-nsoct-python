@@ -1,16 +1,18 @@
 import numpy as np
+import matplotlib.pyplot as plt
 import scipy.fftpack as spfft
 import scipy.signal as sg
 from scipy import interpolate as ip
 from scipy.fftpack import fft, fftshift, ifft,ifftshift
 import os as os
 import os.path
-from os import path
 import Params
 import zipfile
 import xmltodict
 from Params import*
 from scipy import ndimage as ndimage
+from window_function import select_window
+
 
 def OCT_nsOCT_processing(f_name):
     """ The path to the .OCT file """
@@ -83,15 +85,12 @@ def OCT_nsOCT_processing(f_name):
               "\nLateral dimension Y is", Lateral_dimension_Y,
               "\nThe depth in mm is", Depth_in_mm)
 
-
-        # spectral_data_number = np.arange(1, Num_B_frames+1)
-
         B_frames_to_process = Params["B_frames_to_process"]
         A_lines_to_process = Params["A_lines_to_process"]
         processing_B_frames = np.arange(B_frames_to_process[0], B_frames_to_process[1] + 1)
 
         for b_frame_number in processing_B_frames:
-            print('Process b-frame {}'.format(b_frame_number))
+            print('Processing B-frame {}...'.format(b_frame_number))
 
             b__frame = os.path.join(unzipped_folder_dir,"data\Spectral{}.data".format(b_frame_number))
 
@@ -104,18 +103,21 @@ def OCT_nsOCT_processing(f_name):
 
             Chirp_Data_len = Chirp_Data.shape[0]
             x = np.linspace(0,int(Chirp_Data_len-1),Chirp_Data_len)
-            interpolation_function = ip.interp1d(Chirp_Data, DC_Removed, kind = 'linear', axis =1)
+            interpolation_function = ip.interp1d(Chirp_Data, DC_Removed, kind = 'linear', axis = 1)
             Linear_Data = interpolation_function(x)
 
-            Apodization_window = np.hanning(Number_of_pixels)
-            Apodized_data = np.multiply(Linear_Data, Apodization_window)
+            # Apodization window
+            depth_index = np.arange(Number_of_pixels) - Number_of_pixels // 2
+            window_band = 0.3 * Number_of_pixels
+            Apodization_window = select_window("Cosine",Number_of_pixels,Number_of_A_lines,depth_index,window_band)
+            Apodized_data = np.multiply(Linear_Data, Apodization_window.T)
 
             data = Apodized_data.T
-            # data = Linear_Data.T
+            #data = Linear_Data.T
 
             data_after_ifft = 20 * np.log10(abs(spfft.ifft(Apodized_data)))
-            Prep_Normalizatoin = data_after_ifft + abs(np.min(data_after_ifft))
-            Normalized_data = ((Prep_Normalizatoin / (np.amax(Prep_Normalizatoin))) * 255).T
+            Prep_Normalization = data_after_ifft + abs(np.min(data_after_ifft))
+            Normalized_data = ((Prep_Normalization / (np.amax(Prep_Normalization))) * 255).T
 
             Lower_wavelength = Params['Lower_wavelength']
             Upper_wavelength = Params['Upper_wavelength']
@@ -134,10 +136,11 @@ def OCT_nsOCT_processing(f_name):
                 tukey_window_short = sg.windows.tukey(Pixels_per_window, alpha=0.75) # create short tukey
                 tukey_window_full = np.pad(tukey_window_short, pad_width=(0,Number_of_pixels - Pixels_per_window), mode = 'constant') # pad to full length
                 for _ in range(0,num_window*oversampling_degree):
-                    N_window_fft.append(np.log10(abs( (fft(Aline * tukey_window_full)))))
+                    N_window_fft.append(np.log10(abs((fft(Aline * tukey_window_full)))))
                     tukey_window_full = np.roll(tukey_window_full, int(abs(Pixels_per_window/oversampling_degree)))
                 N_window_fft_wo_med_filter=np.array(N_window_fft)
                 N_window_fft = ndimage.median_filter(input=N_window_fft_wo_med_filter, size=(4, 4))
+                #N_window_fft = np.array(N_window_fft)
                 N_window_fft[N_window_fft < Threshold] = 0
                 index_of_max_in_N_window_fft = np.argmax(N_window_fft,axis=0)
                 index_max_N_win_fft_arr.append(index_of_max_in_N_window_fft)
@@ -145,7 +148,9 @@ def OCT_nsOCT_processing(f_name):
             Win4 = np.array(index_max_N_win_fft_arr).T
             Win5a = []
             for w in Win4.T:
-                Win5a.append(Hz[np.round(w * int(abs(Pixels_per_window/oversampling_degree))+ int(abs(Pixels_per_window/(2*oversampling_degree))))])
+                #Win5a.append(Hz[np.round(w * int(abs(Pixels_per_window / oversampling_degree)) + int(
+                    #abs(Pixels_per_window / (2 * oversampling_degree))))])
+                Win5a.append(Hz[np.round(w * int(abs(Pixels_per_window)))])
 
             Win5 = np.array(Win5a).T
 
@@ -177,7 +182,8 @@ def OCT_nsOCT_processing(f_name):
         three_d_OCT = three_d_OCT[:, :, A_lines_to_process[0]-1:A_lines_to_process[1]]
         three_d_nsOCT = three_d_nsOCT[:, :, A_lines_to_process[0] - 1:A_lines_to_process[1]]
 
-        compute_bins_prep = np.unique(three_d_nsOCT)
+        #compute_bins_prep = np.unique(three_d_nsOCT)
+        compute_bins_prep = np.linspace(np.min(three_d_nsOCT),np.max(three_d_nsOCT),101)
         compute_bins = np.sort(compute_bins_prep)[1:]
 
         threshold_spatial_period = np.min(three_d_nsOCT)
@@ -250,11 +256,11 @@ def OCT_nsOCT_processing(f_name):
         b_frames_nsOCT = os.path.join(file_base_name, "b_frames_nsOCT")
 
         for b_frame_number in processing_B_frames:
-            OCT_bf = np.load(b_frames_OCT + r'/OCT_{}.npy'.format(b_frame_number))
+            OCT_bf = np.load(b_frames_OCT_dir + r'/OCT_{}.npy'.format(b_frame_number))
             three_d_OCT_list.append(OCT_bf)
 
         for b_frame_number in processing_B_frames:
-            nsOCT_bf = np.load(b_frames_nsOCT + r'/nsOCT_{}.npy'.format(b_frame_number))
+            nsOCT_bf = np.load(b_frames_nsOCT_dir + r'/nsOCT_{}.npy'.format(b_frame_number))
             three_d_nsOCT_list.append(nsOCT_bf)
 
         three_d_OCT = np.asarray((three_d_OCT_list), dtype=np.float32)
