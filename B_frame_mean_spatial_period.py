@@ -18,6 +18,7 @@ def Mean_spatial_period_for_B_frame(nsOCT, bins, do_compute, do_save):
     Returns:
         None
     """
+    plt.rcParams.update({'font.size': 12})
     if not do_compute:
         return
 
@@ -45,10 +46,11 @@ def Mean_spatial_period_for_B_frame(nsOCT, bins, do_compute, do_save):
 
     # Plot and save histogram for averaged B-frame
     plt.hist(flattened_B_frame, bins=bins, range=histograms_x_range, density=True,
-             color='c', rwidth=0.8)
+             color='c', rwidth=5)
     plt.title("Mean of all B-frames")
     plt.xlabel("Spatial period (nm)")
     plt.ylabel("Amplitude (a.u)")
+    plt.xlim(590,700)
     plt.ylim(0, histograms_y_limit)
     plt.tight_layout()
     b_frame_hist_dir = os.path.join(os.path.dirname(__file__), b_frame_histograms)
