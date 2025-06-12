@@ -13,8 +13,8 @@ for n in np.arange(0, num_of_files):
     f_name = Params["f_name"][n]
     print(f_name)
     three_d_OCT, three_d_nsOCT,bins = Basic.OCT_nsOCT_processing(f_name)
-    Bframe.plot_B_frames(OCT=three_d_OCT, nsOCT=three_d_nsOCT, do_plot=True,do_save=True)
-    enface.enface(OCT = three_d_OCT, nsOCT = three_d_nsOCT, do_plot = True, do_save = True)
-    B_mean.Mean_spatial_period_for_B_frame(nsOCT = three_d_nsOCT, bins = bins, do_compute = True, do_save = True)
-    en_mean.Mean_spatial_period_for_enface(nsOCT = three_d_nsOCT,bins = bins, do_compute = True, do_save = True)
-    flat.full_data_flattened(nsOCT=three_d_nsOCT, bins = bins, do_compute=True)
+    #Bframe.plot_B_frames(OCT=three_d_OCT, nsOCT=three_d_nsOCT, do_plot=True,do_save=True)
+    #enface.enface(OCT = three_d_OCT, nsOCT = three_d_nsOCT, do_plot = True, do_save = True)
+    #B_mean.Mean_spatial_period_for_B_frame(nsOCT = three_d_nsOCT, bins = bins, do_compute = True, do_save = True)
+    #en_mean.Mean_spatial_period_for_enface(nsOCT = three_d_nsOCT,bins = bins, do_compute = True, do_save = True)
+    #flat.full_data_flattened(nsOCT=three_d_nsOCT, bins = bins, do_compute=True)
