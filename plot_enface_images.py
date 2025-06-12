@@ -35,7 +35,6 @@ def enface(OCT, nsOCT, do_plot, do_save):
         Lateral_dimension_Y = Params['Lateral_dimension_Y']
         Depth_in_mm = Params['Depth_in_mm']
         enface_images = Params['enface_images']
-        oct_enface_images = Params['oct_enface_images']
         pixels_selected = Params['pixels_selected']
 
         # Define ranges for processing B-frames and A-lines
@@ -87,7 +86,7 @@ def enface(OCT, nsOCT, do_plot, do_save):
             nsOCT_image_array_save = np.asarray(nsOCT, dtype=np.float32)
 
             # Add colorbar and labels
-            plt.colorbar(mappable=nsOCT_image, shrink=1, label='Spatial Periods (nm)', ticks=[590, 620, 650, 680])
+            plt.colorbar(mappable=nsOCT_image, shrink=1, label='Spatial Periods (nm)', ticks=[600, 620, 650, 680])
             plt.axis('on')
             plt.title('nsOCT image')
             plt.xlabel("X axis (mm)")
@@ -97,7 +96,7 @@ def enface(OCT, nsOCT, do_plot, do_save):
             if do_save:
                 script_dir = os.path.dirname(__file__)
                 enface_dir = os.path.join(script_dir, enface_images)
-                plt.savefig(os.path.join(enface_dir, "{}ns.jpg".format(figN)), bbox_inches='tight')
+                plt.savefig(os.path.join(enface_dir, "{}ns.jpg".format(figN)), bbox_inches='tight', dpi = 300)
                 plt.clf()  # Clear the figure after saving
             else:
                 plt.show()
@@ -125,7 +124,7 @@ def enface(OCT, nsOCT, do_plot, do_save):
             if do_save:
                 script_dir = os.path.dirname(__file__)
                 enface_dir = os.path.join(script_dir, enface_images)
-                plt.savefig(os.path.join(enface_dir, "{}.jpg".format(figN)), bbox_inches='tight')
+                plt.savefig(os.path.join(enface_dir, "{}.jpg".format(figN)), bbox_inches='tight', dpi = 300)
                 plt.clf()  # Clear the figure after saving
             else:
                 plt.show()
