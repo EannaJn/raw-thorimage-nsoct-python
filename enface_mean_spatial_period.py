@@ -122,4 +122,4 @@ def Mean_spatial_period_for_enface(nsOCT, bins, do_compute, do_save):
         np.savetxt(os.path.join(enface_histograms, "enface_stds.txt"),
                    enface_stds, fmt='%1.2f')
         np.savetxt(os.path.join(enface_histograms, "enface_means.txt"),
-                   enface_means, fmt='%1.1f', newline=',')
+                   enface_means, fmt='%1.1f')
