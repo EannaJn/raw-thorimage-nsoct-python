@@ -28,6 +28,8 @@ def plot_B_frames(OCT, nsOCT, do_plot, do_save):
     """
     is_exist = Params['is_exist']
 
+    plt.rcParams.update({'font.size': 7})
+
     if do_plot:  # Proceed only if plotting is enabled
         # Retrieve parameters
         Number_of_pixels = Params['Number_of_pixels']
@@ -72,7 +74,7 @@ def plot_B_frames(OCT, nsOCT, do_plot, do_save):
                 interpolation='none',
                 extent=[selected_X_dim_1, selected_X_dim_2, selected_depth_2, selected_depth_1]
             )
-            plt.colorbar(mappable=OCT_img, shrink=0.5, ax=ax1, label='Intensity (a.u)')
+            plt.colorbar(mappable=OCT_img, shrink=0.3, ax=ax1, label='Intensity (a.u)')
             ax1.set_title('OCT image')
             ax1.set_xlabel("Lateral (mm)")
             ax1.set_ylabel("Depth (mm)")
@@ -87,7 +89,7 @@ def plot_B_frames(OCT, nsOCT, do_plot, do_save):
                 interpolation='none',
                 extent=[selected_X_dim_1, selected_X_dim_2, selected_depth_2, selected_depth_1]
             )
-            plt.colorbar(mappable=nsOCT_img, shrink=0.5, ax=ax2, label='Spatial Periods (nm)')
+            plt.colorbar(mappable=nsOCT_img, shrink=0.3, ax=ax2, label='Spatial Periods (nm)')
             ax2.set_title('nsOCT image')
             ax2.set_xlabel("Lateral (mm)")
             ax2.set_ylabel("Depth (mm)")
@@ -97,7 +99,7 @@ def plot_B_frames(OCT, nsOCT, do_plot, do_save):
                 plt.tight_layout()
                 script_dir = os.path.dirname(__file__)
                 b_frame_dir = os.path.join(script_dir, B_frame_images)
-                plt.savefig(os.path.join(b_frame_dir, f"{figN}.jpg"))
+                plt.savefig(os.path.join(b_frame_dir, f"{figN}.jpg"), dpi = 300)
                 plt.clf()
             else:
                 plt.tight_layout()
@@ -118,14 +120,14 @@ def plot_B_frames(OCT, nsOCT, do_plot, do_save):
                 interpolation='none',
                 extent=[selected_X_dim_1, selected_X_dim_2, selected_depth_2, selected_depth_1]
             )
-            plt.colorbar(mappable=nsOCT_plot, shrink=1, label='Spatial Periods (nm)')
+            plt.colorbar(mappable=nsOCT_plot, shrink=0.3, label='Spatial Periods (nm)')
             plt.title('nsOCT image')
             plt.xlabel("Lateral (mm)")
             plt.ylabel("Depth (mm)")
             if do_save:
                 script_dir = os.path.dirname(__file__)
                 b_frame_dir = os.path.join(script_dir, B_frame_images)
-                plt.savefig(os.path.join(b_frame_dir, f"{figN}ns.jpg"))
+                plt.savefig(os.path.join(b_frame_dir, f"{figN}ns.jpg"), dpi = 300)
                 plt.clf()
             else:
                 plt.show()
@@ -141,14 +143,14 @@ def plot_B_frames(OCT, nsOCT, do_plot, do_save):
                 interpolation='none',
                 extent=[selected_X_dim_1, selected_X_dim_2, selected_depth_2, selected_depth_1]
             )
-            plt.colorbar(mappable=OCT_plot, shrink=1, label='Intensity (a.u)')
+            plt.colorbar(mappable=OCT_plot, shrink=0.3, label='Intensity (a.u)')
             plt.title('OCT image')
             plt.xlabel("Lateral (mm)")
             plt.ylabel("Depth (mm)")
             if do_save:
                 script_dir = os.path.dirname(__file__)
                 b_frame_dir = os.path.join(script_dir, B_frame_images)
-                plt.savefig(os.path.join(b_frame_dir, f"{figN}.jpg"))
+                plt.savefig(os.path.join(b_frame_dir, f"{figN}.jpg"), dpi = 300 )
                 plt.clf()
             else:
                 plt.show()
