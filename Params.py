@@ -1,18 +1,18 @@
-
-f_name = [r"/Users/tomi/Desktop/3D_nsOCT_code/0576417_Lforearm_SCC_0011_Mode3D.oct"]
-Number_of_windows = 10
-Threshold = 2.0
+f_name =[r'/Users/tomi/Desktop/3D_nsOCT_code/oct_data/7D_DAY1_0005_Mode3D.oct',
+         r'/Users/tomi/Desktop/3D_nsOCT_code/oct_data/3D_healthy_0004_Mode3D.oct']
+Number_of_windows = 12
+Threshold = 2.2
 oversampling_degree = 1
-B_frames_to_process = [1,400]
-A_lines_to_process = [1,1218]
-Lower_wavelength = 1.176
-Upper_wavelength = 1.413
-Refractive_index = 1
-pixels_selected= [100,101]
+B_frames_to_process = [1,500]
+A_lines_to_process = [1,500]
+Lower_wavelength = 1.180
+Upper_wavelength = 1.415
+Refractive_index = 1.00
+pixels_selected= [1,300]
 histograms_y_axis_limit = 0.6
-histograms_x_axis_range = [590,690]
+histograms_x_axis_range = [590,700]
 nsOCT_image_colorbar = [600,680]
-OCT_image_intensity_range = [120,260]
+OCT_image_intensity_range = [140,240]
 B_frame_aspect_ratio = 1
 en_face_aspect_ratio = 1
 
