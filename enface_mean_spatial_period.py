@@ -1,125 +1,123 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from Params import *  # Import parameter configurations
-import os  # For file path management
-from nsOCT_maximum_spatial_period import *  # Import custom modules
+from nsOCT_maximum_spatial_period import *  # Custom logic (if needed)
 
 
-def Mean_spatial_period_for_enface(nsOCT, bins, do_compute, do_save):
+def mean_spatial_period_for_enface(nsoct, bins, do_compute=True, do_save=True):
     """
-    Computes and analyzes the mean spatial period for en-face slices of a 3D nsOCT dataset.
+    Compute and optionally save the mean spatial period across en-face slices in a 3D nsOCT dataset.
 
     Args:
-        nsOCT (ndarray): 3D nsOCT dataset.
-        bins (int): Number of bins for histograms.
-        do_compute (bool): Whether to perform the computations.
-        do_save (bool): Whether to save the results.
+        nsOCT (ndarray): 3D nsOCT dataset [B, A, P].
+        bins (int or array-like): Number of histogram bins or bin edges.
+        do_compute (bool): If False, function returns immediately.
+        do_save (bool): If True, saves plots and statistics to disk.
 
     Returns:
-        None
+        dict: Dictionary containing per-enface means, stds, and overall statistics.
     """
     if not do_compute:
-        return
+        return None
 
-    # Load necessary parameters from Params
-    params = Params
-    num_pixels = params['Number_of_pixels']
-    depth_in_mm = params['Depth_in_mm']
-    pixels_selected = params['pixels_selected']
-    a_lines_to_process = params['A_lines_to_process']
-    b_frames_to_process = params['B_frames_to_process']
-    threshold_spatial_period = params['threshold_spatial_period']
-    histograms_x_range = params['histograms_x_axis_range']
-    histograms_y_limit = params['histograms_y_axis_limit']
-    enface_histograms = params['enface_histograms']
+    # Load Params
+    px_start, px_end = Params['pixels_selected']
+    al_start, al_end = Params['a_lines_to_process']
+    bf_start, bf_end = Params['b_frames_to_process']
+    threshold = Params['threshold_spatial_period']
+    x_range = Params['histograms_x_axis_range']
+    y_limit = Params['histograms_y_axis_limit']
+    save_dir = Params['enface_histograms']
+    depth_mm = Params['depth_in_mm']
+    total_px = Params['number_of_pixels']
 
-    # Select the number of pixels
-    selected_pixels = (pixels_selected[1] - pixels_selected[0]) + 1
+    # Ensure save directory exists
+    if do_save:
+        os.makedirs(save_dir, exist_ok=True)
 
-    # Apply threshold to nsOCT data
-    nsOCT[nsOCT <= threshold_spatial_period] = np.NaN
+    # Threshold filtering: set values below or equal to threshold to NaN
+    nsOCT_masked = np.where(nsoct > threshold, nsoct, np.nan)
 
-    # Rearrange axes for enface processing
-    enface_nsOCT = np.swapaxes(np.swapaxes(nsOCT, 1, 0), 2, 1)
-    enface_nsOCT = enface_nsOCT[
-        pixels_selected[0] - 1: pixels_selected[1],
-        a_lines_to_process[0] - 1: a_lines_to_process[1],
-        b_frames_to_process[0] - 1: b_frames_to_process[1]
-    ]
+    # Swap axes to get enface slices: [P, A, B]
+    enface_nsOCT = np.swapaxes(np.swapaxes(nsOCT_masked, 1, 0), 2, 1)
+    # Select the pixel, A-line, and B-frame ranges
+    enface_nsOCT = enface_nsOCT[px_start - 1:px_end, al_start - 1:al_end, bf_start - 1:bf_end]
 
-    # Compute the mean spatial period along pixels axis
-    averaged_pixels = np.nanmean(nsOCT, axis=1)
-    flat_enface = averaged_pixels.flatten()
-    enface_mean = np.nanmean(flat_enface)
-    enface_std = np.nanstd(flat_enface)
+    # Compute stats over all selected enface slices (flattened)
+    all_px_avg = np.nanmean(enface_nsOCT, axis=0).flatten()
+    global_mean = np.nanmean(all_px_avg)
+    global_std = np.nanstd(all_px_avg)
 
-    # Plot histogram for all enface slices
-    plt.hist(flat_enface, bins=bins, range=histograms_x_range, density=True,
-             color='b', rwidth=0.8)
+    # Plot and save histogram for all enface slices
+    plt.hist(all_px_avg, bins=bins, range=x_range, density=True, color='b', rwidth=0.8)
     plt.title("Mean spatial period for all enface images")
     plt.xlabel("Spatial period (nm)")
-    plt.ylabel("Amplitude (a.u)")
-    plt.ylim(0, histograms_y_limit)
+    plt.ylabel("Amplitude (a.u.)")
+    plt.xlim(x_range)
+    plt.ylim(0, y_limit)
     plt.tight_layout()
-    plt.clf()  # Clear the plot for the next use
-
-    # Save mean and standard deviation
-    single_mean_std = np.array([enface_mean, enface_std])
-
-    # Analyze individual enface slices
-    enface_numbers = np.arange(pixels_selected[0], pixels_selected[1] + 1)
-    enface_depths = np.linspace(
-        (depth_in_mm * 2 / num_pixels) * pixels_selected[0],
-        (depth_in_mm * 2 / num_pixels) * pixels_selected[1],
-        selected_pixels
-    )
-    enface_means = []
-    enface_stds = []
-
-    for enface_slice, histo_name in zip(enface_nsOCT, enface_numbers):
-        # Flatten and compute mean/std for the slice
-        flattened_slice = enface_slice.flatten()
-        slice_mean = np.nanmean(flattened_slice)
-        slice_std = np.nanstd(flattened_slice)
-
-        enface_means.append(slice_mean)
-        enface_stds.append(slice_std)
-
-        # Save histograms for individual slices if required
-        if do_save:
-            plt.hist(np.nanmean(enface_slice, axis=0), bins=bins, density=True,
-                     range=histograms_x_range, rwidth=0.8, color='y')
-            plt.title("Spatial period distribution for each enface")
-            plt.xlabel("Spatial period (nm)")
-            plt.ylabel("Amplitude")
-            plt.ylim(0, histograms_y_limit)
-            plt.tight_layout()
-            plt.savefig(os.path.join(enface_histograms, f"{histo_name}.png"))
-            plt.clf()
-
-    # Convert lists to arrays for summary statistics
-    enface_means = np.asarray(enface_means)
-    enface_stds = np.asarray(enface_stds)
-    mean_from_means = np.mean(enface_means)
-    std_from_means = np.std(enface_means)
-
-    # Plot mean spatial period vs enface depths
-    plt.plot(enface_depths, enface_means, '.')
-    plt.title("Mean spatial period vs enface depths")
-    plt.xlabel("Enface depths")
-    plt.ylabel("Mean spatial period (nm)")
-    plt.tight_layout()
-    plt.savefig(os.path.join(enface_histograms, "mean_vs_enface.png"))
+    if do_save:
+        plt.savefig(os.path.join(save_dir, "All_enface_histogram.png"))
     plt.clf()
 
-    # Save computed data
+    # Initialize result lists
+    enface_means = []
+    enface_stds = []
+    enface_indices = range(px_start, px_end + 1)
+    # Compute enface depths in mm (center of each pixel)
+    enface_depths = np.linspace(
+        (depth_mm * 2 / total_px) * px_start,
+        (depth_mm * 2 / total_px) * px_end,
+        px_end - px_start + 1
+    )
+
+    for i, (depth_slice, idx) in enumerate(zip(enface_nsOCT, enface_indices)):
+        flat_slice = depth_slice.flatten()
+        mean_val = np.nanmean(flat_slice)
+        std_val = np.nanstd(flat_slice)
+        enface_means.append(mean_val)
+        enface_stds.append(std_val)
+
+        if do_save:
+            # Histogram of mean values along A-lines for this enface slice
+            hist_vals = np.nanmean(depth_slice, axis=0)
+            plt.hist(hist_vals, bins=bins, range=x_range, density=True, rwidth=0.8, color='y')
+            plt.title(f"Spatial period distribution - Enface {idx}")
+            plt.xlabel("Spatial period (nm)")
+            plt.ylabel("Amplitude (a.u.)")
+            plt.xlim(x_range)
+            plt.ylim(0, y_limit)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"enface_{idx}.png"))
+            plt.clf()
+
+    enface_means = np.array(enface_means)
+    enface_stds = np.array(enface_stds)
+    mean_of_means = np.nanmean(enface_means)
+    std_of_means = np.nanstd(enface_means)
+
+    # Final plot: enface depth vs mean spatial period
+    plt.plot(enface_depths, enface_means, '.-', color='navy')
+    plt.title("Mean spatial period vs enface depths")
+    plt.xlabel("Depth (mm)")
+    plt.ylabel("Mean spatial period (nm)")
+    plt.tight_layout()
     if do_save:
-        np.save(os.path.join(enface_histograms, "en_face_means.npy"), enface_means)
-        np.savetxt(os.path.join(enface_histograms, "mean_from_enface_means.txt"),
-                   [mean_from_means], fmt='%1.2f')
-        np.savetxt(os.path.join(enface_histograms, "std_from_enface_means.txt"),
-                   [std_from_means], fmt='%1.2f')
-        np.savetxt(os.path.join(enface_histograms, "enface_stds.txt"),
-                   enface_stds, fmt='%1.2f')
-        np.savetxt(os.path.join(enface_histograms, "enface_means.txt"),
-                   enface_means, fmt='%1.1f')
+        plt.savefig(os.path.join(save_dir, "mean_vs_enface.png"))
+    plt.clf()
+
+    # Save numeric results
+    if do_save:
+        np.save(os.path.join(save_dir, "enface_means.npy"), enface_means)
+        np.savetxt(os.path.join(save_dir, "enface_means.txt"), enface_means, fmt='%1.4f', header="enface_means")
+        np.savetxt(os.path.join(save_dir, "enface_stds.txt"), enface_stds, fmt='%1.4f', header="enface_stds")
+        np.savetxt(os.path.join(save_dir, "mean_from_enface_means.txt"), [mean_of_means], fmt='%1.4f', header="mean_of_means")
+        np.savetxt(os.path.join(save_dir, "std_from_enface_means.txt"), [std_of_means], fmt='%1.4f', header="std_of_means")
+        np.savetxt(os.path.join(save_dir, "global_enface_mean_std.txt"), [global_mean, global_std], fmt='%1.4f', header="global_mean global_std")
+
+    return {
+        "enface_means": enface_means,
+        "enface_stds": enface_stds,
+        "mean_of_means": mean_of_means,
+        "std_of_means": std_of_means,
+        "global_mean": global_mean,
+        "global_std": global_std,
+        "enface_depths": enface_depths
+    }
