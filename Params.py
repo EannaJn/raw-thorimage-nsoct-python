@@ -30,5 +30,4 @@ Params = {
     'oct_image_intensity_range': oct_image_intensity_range,
     'b_frame_aspect_ratio': b_frame_aspect_ratio,
     'en_face_aspect_ratio': en_face_aspect_ratio,
-    'oversampling_degree': oversampling_degree
 }
