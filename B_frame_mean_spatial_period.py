@@ -1,112 +1,110 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from Params import *  # Import parameters
-import os  # For file path management
-from nsOCT_maximum_spatial_period import *  # Import custom modules
+import os
+from nsOCT_maximum_spatial_period import *
 
-
-def Mean_spatial_period_for_B_frame(nsOCT, bins, do_compute, do_save):
+def mean_spatial_period_for_b_frame(nsoct, bins, do_compute=True, do_save=True):
     """
-    Computes and analyzes the mean spatial period for B-frames in a 3D nsOCT dataset.
+    Computes and optionally saves histograms, mean, and standard deviation
+    of spatial periods across B-frames in a 3D nsOCT dataset.
 
     Args:
-        nsOCT (ndarray): 3D nsOCT dataset.
-        bins (int): Number of bins for histograms.
-        do_compute (bool): Whether to perform the computations.
-        do_save (bool): Whether to save the results.
+        nsoct (np.ndarray): 3D array of nsOCT spatial period values (shape: [b, y, x]).
+        bins (int or array-like): Number of bins or bin edges for histogram plots.
+        do_compute (bool): Whether to perform the analysis.
+        do_save (bool): Whether to save figures and data to disk.
 
     Returns:
-        None
+        dict: Dictionary containing per-frame means, stds, and overall statistics.
     """
-    plt.rcParams.update({'font.size': 12})
     if not do_compute:
-        return
+        return None
 
-    # Load necessary parameters
+    import matplotlib
+    matplotlib.rcParams.update({'font.size': 12})
+
     params = Params
     pixels_selected = params['pixels_selected']
-    threshold_spatial_period = params['threshold_spatial_period']
-    b_frames_to_process = params['B_frames_to_process']
-    histograms_x_range = params['histograms_x_axis_range']
-    histograms_y_limit = params['histograms_y_axis_limit']
-    b_frame_histograms = params['B_frame_histograms']
+    threshold_sp = params['threshold_spatial_period']
+    b_frames_range = np.arange(params['b_frames_to_process'][0], params['b_frames_to_process'][1] + 1)
+    hist_x_range = params['histograms_x_axis_range']
+    hist_y_limit = params['histograms_y_axis_limit']
+    save_dir = os.path.join(os.path.dirname(__file__), params['b_frame_histograms'])
+    if do_save:
+        os.makedirs(save_dir, exist_ok=True)
 
-    # Define the range of B-frames to process
-    processing_B_frames = np.arange(b_frames_to_process[0], b_frames_to_process[1] + 1)
+    # Apply threshold and crop to selected pixel range
+    ns_oct_masked = np.where(nsoct <= threshold_sp, np.nan, nsoct)
+    ns_oct_masked = ns_oct_masked[:, pixels_selected[0] - 1:pixels_selected[1], :]
 
-    # Apply threshold to nsOCT data
-    nsOCT[nsOCT <= threshold_spatial_period] = np.NaN
-    nsOCT = nsOCT[:, pixels_selected[0] - 1: pixels_selected[1], :]
+    # Compute histogram for averaged B-frame (mean over B, then flatten)
+    avg_b_frame = np.nanmean(ns_oct_masked, axis=0).flatten()
+    mean_all = np.nanmean(avg_b_frame)
+    std_all = np.nanstd(avg_b_frame)
 
-    # Compute mean spatial period for averaged B-frame
-    averaged_B_frame = np.nanmean(nsOCT, axis=0)
-    flattened_B_frame = averaged_B_frame.flatten()
-    mean_spatial_period = np.nanmean(flattened_B_frame)
-    std_spatial_period = np.nanstd(flattened_B_frame)
+    if do_save:
+        plt.hist(avg_b_frame, bins=bins, range=hist_x_range, density=True, color='c', rwidth=0.8)
+        plt.title("Mean of all B-frames")
+        plt.xlabel("Spatial period (nm)")
+        plt.ylabel("Amplitude (a.u.)")
+        plt.xlim(hist_x_range)
+        plt.ylim(0, hist_y_limit)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, "averaged_b_frame.png"))
+        plt.clf()
 
-    # Plot and save histogram for averaged B-frame
-    plt.hist(flattened_B_frame, bins=bins, range=histograms_x_range, density=True,
-             color='c', rwidth=5)
-    plt.title("Mean of all B-frames")
-    plt.xlabel("Spatial period (nm)")
-    plt.ylabel("Amplitude (a.u)")
-    plt.xlim(590,700)
-    plt.ylim(0, histograms_y_limit)
-    plt.tight_layout()
-    b_frame_hist_dir = os.path.join(os.path.dirname(__file__), b_frame_histograms)
-    plt.savefig(os.path.join(b_frame_hist_dir, "Averaged_B_frame.png"))
-    plt.clf()
+        np.savetxt(os.path.join(save_dir, "b_frame_single_data_mean_and_std.txt"),
+                   [mean_all, std_all], fmt='%.4f', header="mean_all std_all")
 
-    # Save mean and standard deviation of averaged B-frame
-    np.savetxt(os.path.join(b_frame_histograms, "B_frame_single_data_mean_and_std.txt"),
-               [mean_spatial_period, std_spatial_period], fmt='%1.2f')
+    # Per-frame statistics
+    frame_means = []
+    frame_stds = []
 
-    # Compute mean and standard deviation for individual B-frames
-    b_frame_means = []
-    b_frame_stds = []
+    for idx, b_frame in zip(b_frames_range, ns_oct_masked):
+        flat = b_frame.flatten()
+        frame_means.append(np.nanmean(flat))
+        frame_stds.append(np.nanstd(flat))
 
-    for b_frame, histo_name in zip(nsOCT, processing_B_frames):
-        flattened_frame = b_frame.flatten()
-        b_frame_mean = np.nanmean(flattened_frame)
-        b_frame_std = np.nanstd(flattened_frame)
-        b_frame_means.append(b_frame_mean)
-        b_frame_stds.append(b_frame_std)
-
-        # Save histogram for each B-frame if required
         if do_save:
-            averaged_along_A_lines = np.nanmean(b_frame, axis=1)
-            plt.hist(averaged_along_A_lines, bins=bins, range=histograms_x_range, density=True,
+            avg_along_a = np.nanmean(b_frame, axis=1)
+            plt.hist(avg_along_a, bins=bins, range=hist_x_range, density=True,
                      color='g', rwidth=0.8)
-            plt.title("Spatial period distribution for a B-frame")
+            plt.title(f"Spatial period distribution for B-frame {idx}")
             plt.xlabel("Spatial period (nm)")
-            plt.ylabel("Amplitude (a.u)")
-            plt.ylim(0, histograms_y_limit)
+            plt.ylabel("Amplitude (a.u.)")
+            plt.xlim(hist_x_range)
+            plt.ylim(0, hist_y_limit)
             plt.tight_layout()
-            plt.savefig(os.path.join(b_frame_hist_dir, f"{histo_name}.png"))
+            plt.savefig(os.path.join(save_dir, f"b_frame_{idx}.png"))
             plt.clf()
 
-    # Convert lists to arrays for further processing
-    b_frame_means = np.array(b_frame_means)
-    b_frame_stds = np.array(b_frame_stds)
-    mean_from_means = np.mean(b_frame_means)
-    std_from_means = np.std(b_frame_means)
+    frame_means = np.array(frame_means)
+    frame_stds = np.array(frame_stds)
+    mean_of_means = np.nanmean(frame_means)
+    std_of_means = np.nanstd(frame_means)
 
-    # Plot and save mean spatial period vs B-frame number
-    plt.plot(processing_B_frames, b_frame_means, '.')
-    plt.title("B-frames vs Mean Spatial Period")
-    plt.xlabel("B-frame number")
-    plt.ylabel("Mean Spatial Period for B-frame (nm)")
-    plt.tight_layout()
-    plt.savefig(os.path.join(b_frame_hist_dir, "mean_vs_B_frames.png"))
-    plt.clf()
+    if do_save:
+        # Save line plot of B-frame means
+        plt.plot(b_frames_range, frame_means, '.', markersize=8)
+        plt.title("B-frames vs Mean Spatial Period")
+        plt.xlabel("B-frame number")
+        plt.ylabel("Mean Spatial Period for B-frame (nm)")
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, "mean_vs_b_frames.png"))
+        plt.clf()
 
-    # Save results
-    np.save(os.path.join(b_frame_histograms, "B_frame_means.npy"), b_frame_means)
-    np.savetxt(os.path.join(b_frame_histograms, "std_from_B_frame_means.txt"),
-               [std_from_means], fmt='%1.2f')
-    np.savetxt(os.path.join(b_frame_histograms, "mean_from_B_frame_means.txt"),
-               [mean_from_means], fmt='%1.2f')
-    np.savetxt(os.path.join(b_frame_histograms, "B_frame_stds.txt"),
-               b_frame_stds, fmt='%1.2f')
-    np.savetxt(os.path.join(b_frame_histograms, "B_frame_means.txt"),
-               b_frame_means, fmt='%1.2f')
+        # Save all results
+        np.save(os.path.join(save_dir, "b_frame_means.npy"), frame_means)
+        np.savetxt(os.path.join(save_dir, "b_frame_means.txt"), frame_means, fmt='%.4f', header="b_frame_means")
+        np.savetxt(os.path.join(save_dir, "b_frame_stds.txt"), frame_stds, fmt='%.4f', header="b_frame_stds")
+        np.savetxt(os.path.join(save_dir, "mean_from_b_frame_means.txt"), [mean_of_means], fmt='%.4f', header="mean_of_means")
+        np.savetxt(os.path.join(save_dir, "std_from_b_frame_means.txt"), [std_of_means], fmt='%.4f', header="std_of_means")
+
+    return {
+        "frame_means": frame_means,
+        "frame_stds": frame_stds,
+        "mean_of_means": mean_of_means,
+        "std_of_means": std_of_means,
+        "mean_all": mean_all,
+        "std_all": std_all
+    }
