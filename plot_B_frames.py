@@ -4,153 +4,156 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 
-from Params import *  # Import parameters (ensure this file exists)
-from nsOCT_maximum_spatial_period import *  # Import additional utilities
+from Params import *  # Ensure this file defines all necessary parameters
+from nsOCT_maximum_spatial_period import *
 
-# Use the Qt5 backend for matplotlib
 matplotlib.use('Qt5Agg')
-
-# Configure global font settings for plots
 rcParams['font.serif'] = 'Times New Roman'
 rcParams['font.family'] = 'serif'
 rcParams['font.size'] = 12
 
-
-def plot_B_frames(OCT, nsOCT, do_plot, do_save):
+def plot_b_frames(
+    oct,
+    nsoct,
+    do_plot=True,
+    do_save=False,
+    oct_cmap='Greys_r',
+    ns_cmap='jet',
+    figsize=(10, 5),
+    dpi=300
+):
     """
-    Function to plot B-frame images for OCT and nsOCT datasets.
+    Plot and/or save B-frame slices of OCT and nsOCT datasets.
 
     Args:
-        OCT: 3D OCT data.
-        nsOCT: 3D nsOCT data.
-        do_plot (bool): Whether to display the plots.
-        do_save (bool): Whether to save the plots to files.
+        oct (np.ndarray): 3D OCT volume (b, d, a).
+        nsoct (np.ndarray): 3D nsOCT volume (b, d, a).
+        do_plot (bool): Whether to display plots interactively.
+        do_save (bool): Whether to save plots as image files.
+        oct_cmap (str): Colormap for OCT images.
+        ns_cmap (str): Colormap for nsOCT images.
+        figsize (tuple): Figure size for plots.
+        dpi (int): Dots per inch for saved figures.
     """
-    is_exist = Params['is_exist']
+    params = Params
+    is_exist = params.get('is_exist', False)
 
-    plt.rcParams.update({'font.size': 7})
+    # Load all needed parameters
+    number_of_pixels = params['number_of_pixels']
+    pixels_selected = params['pixels_selected']
+    number_of_a_lines = params['number_of_a_lines']
+    number_of_b_frames = params['number_of_b_frames']
+    lateral_dimension_x = params['lateral_dimension_x']
+    depth_in_mm = params['depth_in_mm']
+    b_frame_images = params['b_frame_images']
+    b_frames_to_process = np.arange(params["b_frames_to_process"][0], params["b_frames_to_process"][1] + 1)
+    a_lines_to_process = params["a_lines_to_process"]
+    selected_x_dim_1 = (lateral_dimension_x / number_of_a_lines) * a_lines_to_process[0]
+    selected_x_dim_2 = (lateral_dimension_x / number_of_a_lines) * a_lines_to_process[1]
+    selected_depth_1 = (depth_in_mm * 2 / number_of_pixels) * pixels_selected[0]
+    selected_depth_2 = (depth_in_mm * 2 / number_of_pixels) * pixels_selected[1]
 
-    if do_plot:  # Proceed only if plotting is enabled
-        # Retrieve parameters
-        Number_of_pixels = Params['Number_of_pixels']
-        pixels_selected = Params['pixels_selected']
-        Number_of_A_lines = Params['Number_of_A_lines']
-        Number_of_B_frames = Params['Number_of_B_frames']
-        Lateral_dimension_X = Params['Lateral_dimension_X']
-        Lateral_dimension_Y = Params['Lateral_dimension_Y']
-        Depth_in_mm = Params['Depth_in_mm']
-        B_frame_images = Params['B_frame_images']
-        B_frames_to_process = Params["B_frames_to_process"]
-        A_lines_to_process = Params["A_lines_to_process"]
+    def _plot_pair(oct_img, nsoct_img, fign, suffix=""):
+        fig, (ax1, ax2) = plt.subplots(1, 2, num='nsOCT_B-frame', figsize=figsize)
 
-        # Processing ranges for B-frames and A-lines
-        processing_B_frames = np.arange(B_frames_to_process[0], B_frames_to_process[1] + 1)
-        processing_A_lines = np.arange(A_lines_to_process[0], A_lines_to_process[1] + 1)
+        # OCT
+        im1 = ax1.imshow(
+            oct_img[pixels_selected[0]:pixels_selected[1], :],
+            cmap=oct_cmap,
+            vmin=oct_image_intensity_range[0],
+            vmax=oct_image_intensity_range[1],
+            aspect=b_frame_aspect_ratio,
+            interpolation='none',
+            extent=[selected_x_dim_1, selected_x_dim_2, selected_depth_2, selected_depth_1]
+        )
+        ax1.set_title("OCT image")
+        ax1.set_xlabel("Lateral (mm)")
+        ax1.set_ylabel("Depth (mm)")
+        plt.colorbar(im1, ax=ax1, shrink=0.3, label="Intensity (a.u)")
 
-        # Calculate dimensions for display
-        selected_depth_1 = (Depth_in_mm * 2 / Number_of_pixels) * pixels_selected[0]
-        selected_depth_2 = (Depth_in_mm * 2 / Number_of_pixels) * pixels_selected[1]
-        selected_X_dim_1 = (Lateral_dimension_X / Number_of_A_lines) * A_lines_to_process[0]
-        selected_X_dim_2 = (Lateral_dimension_X / Number_of_A_lines) * A_lines_to_process[1]
+        # nsOCT
+        im2 = ax2.imshow(
+            nsoct_img[pixels_selected[0]:pixels_selected[1], :],
+            cmap=ns_cmap,
+            vmin=ns_oct_image_colorbar[0],
+            vmax=ns_oct_image_colorbar[1],
+            aspect=b_frame_aspect_ratio,
+            interpolation='none',
+            extent=[selected_x_dim_1, selected_x_dim_2, selected_depth_2, selected_depth_1]
+        )
+        ax2.set_title("nsOCT image")
+        ax2.set_xlabel("Lateral (mm)")
+        ax2.set_ylabel("Depth (mm)")
+        plt.colorbar(im2, ax=ax2, shrink=0.3, label="Spatial Periods (nm)")
 
-        # Retrieve data
-        three_d_OCT = OCT
-        three_d_nsOCT = nsOCT
-        print(f"The dimension of three_d_OCT is {np.shape(three_d_OCT)}")
-        print(f"The dimension of three_d_nsOCT is {np.shape(three_d_nsOCT)}")
+        plt.tight_layout()
 
-        # Iterate over each B-frame to process
-        for OCT_image, nsOCT_image, figN in zip(three_d_OCT, three_d_nsOCT, processing_B_frames):
-            # Create side-by-side subplots for OCT and nsOCT
-            fig, (ax1, ax2) = plt.subplots(1, 2, num='nsOCT_Anand')
+        if do_save:
+            try:
+                save_dir = os.path.join(os.path.dirname(__file__), b_frame_images)
+                os.makedirs(save_dir, exist_ok=True)
+                plt.savefig(os.path.join(save_dir, f"{fign}{suffix}.jpg"), dpi=dpi)
+                plt.close(fig)
+            except Exception as e:
+                print(f"Error saving figure {fign}{suffix}: {e}")
+        elif do_plot:
+            plt.show()
+            plt.close(fig)
 
-            # Plot OCT image
-            OCT_img = ax1.imshow(
-                OCT_image[pixels_selected[0]:pixels_selected[1], :],
-                cmap='Greys_r',
-                vmin=OCT_image_intensity_range[0],
-                vmax=OCT_image_intensity_range[1],
-                aspect=B_frame_aspect_ratio,
-                interpolation='none',
-                extent=[selected_X_dim_1, selected_X_dim_2, selected_depth_2, selected_depth_1]
-            )
-            plt.colorbar(mappable=OCT_img, shrink=0.3, ax=ax1, label='Intensity (a.u)')
-            ax1.set_title('OCT image')
-            ax1.set_xlabel("Lateral (mm)")
-            ax1.set_ylabel("Depth (mm)")
+    def _plot_single(img, fign, mode, cmap, vmin, vmax, aspect, extent, colorbar_label, do_save, suffix=""):
+        fig, ax = plt.subplots(figsize=(figsize[0]//2, figsize[1]))
+        im = ax.imshow(
+            img[pixels_selected[0]:pixels_selected[1], :],
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            aspect=aspect,
+            interpolation='none',
+            extent=extent
+        )
+        ax.set_title(f"{mode} image")
+        ax.set_xlabel("Lateral (mm)")
+        ax.set_ylabel("Depth (mm)")
+        plt.colorbar(im, ax=ax, shrink=0.5, label=colorbar_label)
+        plt.tight_layout()
+        if do_save:
+            try:
+                save_dir = os.path.join(os.path.dirname(__file__), b_frame_images)
+                os.makedirs(save_dir, exist_ok=True)
+                plt.savefig(os.path.join(save_dir, f"{fign}{suffix}_{mode}.jpg"), dpi=dpi)
+                plt.close(fig)
+            except Exception as e:
+                print(f"Error saving {mode} figure {fign}{suffix}: {e}")
+        elif do_plot:
+            plt.show()
+            plt.close(fig)
 
-            # Plot nsOCT image
-            nsOCT_img = ax2.imshow(
-                nsOCT_image[pixels_selected[0]:pixels_selected[1], :],
-                cmap='jet',
-                vmin=nsOCT_image_colorbar[0],
-                vmax=nsOCT_image_colorbar[1],
-                aspect=B_frame_aspect_ratio,
-                interpolation='none',
-                extent=[selected_X_dim_1, selected_X_dim_2, selected_depth_2, selected_depth_1]
-            )
-            plt.colorbar(mappable=nsOCT_img, shrink=0.3, ax=ax2, label='Spatial Periods (nm)')
-            ax2.set_title('nsOCT image')
-            ax2.set_xlabel("Lateral (mm)")
-            ax2.set_ylabel("Depth (mm)")
+    # Plot currently processed frames
+    if do_plot:
+        print(f"The dimension of OCT is {oct.shape}")
+        print(f"The dimension of nsOCT is {nsoct.shape}")
 
-            # Save or display the plot
-            if do_save:
-                plt.tight_layout()
-                script_dir = os.path.dirname(__file__)
-                b_frame_dir = os.path.join(script_dir, B_frame_images)
-                plt.savefig(os.path.join(b_frame_dir, f"{figN}.jpg"), dpi = 300)
-                plt.clf()
-            else:
-                plt.tight_layout()
-                plt.show()
+    if not is_exist:
+        for i, fign in enumerate(b_frames_to_process):
+            _plot_pair(oct[i], nsoct[i], fign)
 
-    # Handle case where existing images should be plotted
+    # If previously saved data exists, plot or save again from that as separate images
     if is_exist:
-        print(f"The OCT saving location is {Params['oct_B_frames']}")
-
-        for nsOCT_img, figN in zip(three_d_nsOCT, processing_B_frames):
-            # Plot nsOCT image
-            nsOCT_plot = plt.imshow(
-                nsOCT_img[pixels_selected[0]:pixels_selected[1], :],
-                cmap='jet',
-                vmin=nsOCT_image_colorbar[0],
-                vmax=nsOCT_image_colorbar[1],
-                aspect=B_frame_aspect_ratio,
-                interpolation='none',
-                extent=[selected_X_dim_1, selected_X_dim_2, selected_depth_2, selected_depth_1]
+        print(f"The OCT saving location is {params.get('oct_b_frames', 'N/A')}")
+        for i, fign in enumerate(b_frames_to_process):
+            # Plot OCT image only
+            _plot_single(
+                oct[i], fign, "OCT", oct_cmap,
+                oct_image_intensity_range[0], oct_image_intensity_range[1],
+                b_frame_aspect_ratio,
+                [selected_x_dim_1, selected_x_dim_2, selected_depth_2, selected_depth_1],
+                "Intensity (a.u)", do_save, suffix=""
             )
-            plt.colorbar(mappable=nsOCT_plot, shrink=0.3, label='Spatial Periods (nm)')
-            plt.title('nsOCT image')
-            plt.xlabel("Lateral (mm)")
-            plt.ylabel("Depth (mm)")
-            if do_save:
-                script_dir = os.path.dirname(__file__)
-                b_frame_dir = os.path.join(script_dir, B_frame_images)
-                plt.savefig(os.path.join(b_frame_dir, f"{figN}ns.jpg"), dpi = 300)
-                plt.clf()
-            else:
-                plt.show()
-
-        for OCT_img, figN in zip(three_d_OCT, processing_B_frames):
-            # Plot OCT image
-            OCT_plot = plt.imshow(
-                OCT_img[pixels_selected[0]:pixels_selected[1], :],
-                cmap='Greys_r',
-                vmin=OCT_image_intensity_range[0],
-                vmax=OCT_image_intensity_range[1],
-                aspect=B_frame_aspect_ratio,
-                interpolation='none',
-                extent=[selected_X_dim_1, selected_X_dim_2, selected_depth_2, selected_depth_1]
+            # Plot nsOCT image only
+            _plot_single(
+                nsoct[i], fign, "nsOCT", ns_cmap,
+                ns_oct_image_colorbar[0], ns_oct_image_colorbar[1],
+                b_frame_aspect_ratio,
+                [selected_x_dim_1, selected_x_dim_2, selected_depth_2, selected_depth_1],
+                "Spatial Periods (nm)", do_save, suffix="ns"
             )
-            plt.colorbar(mappable=OCT_plot, shrink=0.3, label='Intensity (a.u)')
-            plt.title('OCT image')
-            plt.xlabel("Lateral (mm)")
-            plt.ylabel("Depth (mm)")
-            if do_save:
-                script_dir = os.path.dirname(__file__)
-                b_frame_dir = os.path.join(script_dir, B_frame_images)
-                plt.savefig(os.path.join(b_frame_dir, f"{figN}.jpg"), dpi = 300 )
-                plt.clf()
-            else:
-                plt.show()
