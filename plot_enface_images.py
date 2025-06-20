@@ -1,130 +1,115 @@
-import matplotlib
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
-from matplotlib_scalebar.scalebar import ScaleBar
-from Params import *  # Import global parameters from an external file
-import os
 from matplotlib import rcParams
-from nsOCT_maximum_spatial_period import *  # Import specific functions or constants
-matplotlib.use('Qt5Agg')  # Use Qt5Agg backend for rendering
+from pathlib import Path
+from nsOCT_maximum_spatial_period import (
+    Params, a_lines_to_process, b_frames_to_process,
+    en_face_aspect_ratio, ns_oct_image_colorbar,
+    oct_image_intensity_range
+)
+import matplotlib.font_manager as fm
 
-# Configure global font settings for plots
+matplotlib.use('Qt5Agg')
 rcParams['font.serif'] = 'Times New Roman'
 rcParams['font.family'] = 'serif'
 rcParams['font.size'] = 12
 
-def enface(OCT, nsOCT, do_plot, do_save):
+def plot_enface_images(oct, nsoct, do_plot=True, do_save=False):
     """
-    Function to process and visualize en-face images from OCT and nsOCT data.
+    Process and visualize en-face OCT and nsOCT images in a single function, with X and Y scale bars.
 
     Parameters:
-    OCT (array): 3D array containing OCT data.
-    nsOCT (array): 3D array containing nsOCT data.
-    do_plot (bool): Whether to display plots.
-    do_save (bool): Whether to save the generated plots.
+        oct (ndarray): 3D OCT volume (b_frames, a_lines, pixels).
+        nsoct (ndarray): 3D nsOCT volume (b_frames, a_lines, pixels).
+        do_plot (bool): Whether to display images.
+        do_save (bool): Whether to save images to disk.
     """
-    is_exist = Params['is_exist']  # Check if a specific condition exists (not used later)
+    if not do_plot and not do_save:
+        return
 
-    if do_plot:
-        # Load parameters for image processing and plotting
-        Number_of_pixels = Params['Number_of_pixels']
-        Number_of_A_lines = Params['Number_of_A_lines']
-        Number_of_B_frames = Params['Number_of_B_frames']
-        Lateral_dimension_X = Params['Lateral_dimension_X']
-        Lateral_dimension_Y = Params['Lateral_dimension_Y']
-        Depth_in_mm = Params['Depth_in_mm']
-        enface_images = Params['enface_images']
-        pixels_selected = Params['pixels_selected']
+    # Load parameters
+    px_start, px_end = Params['pixels_selected']
+    n_alines = Params['number_of_a_lines']
+    n_bframes = Params['number_of_b_frames']
+    lat_x = Params['lateral_dimension_x']
+    lat_y = Params['lateral_dimension_y']
+    enface_dir = Path(__file__).resolve().parent / Params['enface_images']
 
-        # Define ranges for processing B-frames and A-lines
-        processing_B_frames = np.arange(B_frames_to_process[0], B_frames_to_process[1] + 1)
-        Num_B_frames = len(processing_B_frames)
+    # Coordinate extents
+    x1, x2 = (lat_x / n_alines) * np.array(a_lines_to_process)
+    y1, y2 = (lat_y / n_bframes) * np.array(b_frames_to_process)
 
-        processing_A_lines = np.arange(A_lines_to_process[0], A_lines_to_process[1] + 1)
-        num_A_lines_processed = len(processing_A_lines)
+    # Calculate scale bar lengths (quarter of each dimension)
+    x_extent = abs(x2 - x1)
+    y_extent = abs(y2 - y1)
+    x_scalebar_length = 0.25 * x_extent
+    y_scalebar_length = 0.25 * y_extent
 
-        # Input 3D data
-        three_d_OCT = OCT
-        three_d_nsOCT = nsOCT
+    img_shape = (a_lines_to_process[1] - a_lines_to_process[0], b_frames_to_process[1] - b_frames_to_process[0])
+    x_pixel_size = x_extent / img_shape[0] if img_shape[0] > 0 else 1
+    y_pixel_size = y_extent / img_shape[1] if img_shape[1] > 0 else 1
 
-        print("The dimension of three_d_OCT is", np.shape(three_d_OCT))
-        print("The dimension of three_d_nsOCT is", np.shape(three_d_nsOCT))
+    # Reorient and crop both OCT and nsOCT
+    def reorient_and_crop(data):
+        data = np.swapaxes(data, 1, 0)
+        data = np.swapaxes(data, 2, 1)
+        return data[px_start - 1:px_end,
+                    a_lines_to_process[0] - 1:a_lines_to_process[1],
+                    b_frames_to_process[0] - 1:b_frames_to_process[1]]
 
-        # Reorder dimensions for easier en-face visualization
-        swap_array_nsOCT = np.swapaxes(three_d_nsOCT, 1, 0)
-        enface_nsOCT = np.swapaxes(swap_array_nsOCT, 2, 1)
+    enface_nsoct = reorient_and_crop(nsoct)
+    enface_oct = reorient_and_crop(oct)
+    fig_numbers = np.arange(px_start, px_end + 1)
 
-        swap_array_OCT = np.swapaxes(three_d_OCT, 1, 0)
-        enface_OCT = np.swapaxes(swap_array_OCT, 2, 1)
+    if do_save:
+        enface_dir.mkdir(parents=True, exist_ok=True)
 
-        # Calculate lateral dimensions of selected ranges
-        selected_Y_dimension_1 = float((Lateral_dimension_Y / Number_of_B_frames) * B_frames_to_process[0])
-        selected_Y_dimension_2 = float((Lateral_dimension_Y / Number_of_B_frames) * B_frames_to_process[1])
-        selected_X_dim_1 = float((Lateral_dimension_X / Number_of_A_lines) * A_lines_to_process[0])
-        selected_X_dim_2 = float((Lateral_dimension_X / Number_of_A_lines) * A_lines_to_process[1])
+    # Font properties for scale bar
+    fontprops = fm.FontProperties(family='serif', size=10)
 
-        # Crop data to selected pixels, A-lines, and B-frames
-        enface_OCT = enface_OCT[pixels_selected[0] - 1:pixels_selected[1],
-                                A_lines_to_process[0]-1:A_lines_to_process[1],
-                                B_frames_to_process[0]-1:B_frames_to_process[1]]
+    for i, fign in enumerate(fig_numbers):
+        # Plot nsOCT image
+        fig, ax = plt.subplots()
+        im_ns = ax.imshow(
+            enface_nsoct[i], cmap='jet', aspect=en_face_aspect_ratio, interpolation='none',
+            vmin=ns_oct_image_colorbar[0], vmax=ns_oct_image_colorbar[1],
+            extent=[x1, x2, y2, y1]
+        )
+        plt.colorbar(im_ns, ax=ax, shrink=1, label='Spatial Periods (nm)', ticks=[600, 620, 650, 680])
+        ax.set_title('nsOCT image')
+        ax.set_xlabel("X axis (mm)")
+        ax.set_ylabel("Y axis (mm)")
 
-        enface_nsOCT = enface_nsOCT[pixels_selected[0] - 1:pixels_selected[1],
-                                    A_lines_to_process[0]-1:A_lines_to_process[1],
-                                    B_frames_to_process[0]-1:B_frames_to_process[1]]
+        if do_save:
+            ns_save_path = enface_dir / f"{fign}ns.jpg"
+            plt.savefig(ns_save_path, bbox_inches='tight', dpi=300)
+            plt.clf()
+        elif do_plot:
+            plt.show()
 
-        # Generate figure numbers for saving images
-        figure_number = np.arange(pixels_selected[0], pixels_selected[1] + 1)
+        # Plot OCT image
+        oct_img = enface_oct[i]
+        oct_rescaled = oct_img - np.min(oct_img)
+        oct_mean = np.mean(oct_rescaled, axis=0)
+        oct_bg = oct_mean - savgol_filter(oct_mean, window_length=10, polyorder=2)
+        oct_final = oct_rescaled - oct_bg
 
-        # Plot nsOCT images
-        for nsOCT, figN in zip(enface_nsOCT, figure_number):
-            # Display nsOCT image with appropriate settings
-            nsOCT_image = plt.imshow(nsOCT, cmap='jet', aspect=en_face_aspect_ratio, interpolation='none',
-                                     vmin=nsOCT_image_colorbar[0], vmax=nsOCT_image_colorbar[1],
-                                     extent=[selected_X_dim_1, selected_X_dim_2,
-                                             selected_Y_dimension_2, selected_Y_dimension_1])
-            nsOCT_image_array_save = np.asarray(nsOCT, dtype=np.float32)
+        fig, ax = plt.subplots()
+        im_oct = ax.imshow(
+            oct_final, cmap='Greys_r', aspect=en_face_aspect_ratio, interpolation='none',
+            vmin=oct_image_intensity_range[0], vmax=oct_image_intensity_range[1],
+            extent=[x1, x2, y2, y1]
+        )
+        plt.colorbar(im_oct, ax=ax, shrink=1, label="Intensity (a.u)")
+        ax.set_title('OCT image')
+        ax.set_xlabel("X axis (mm)")
+        ax.set_ylabel("Y axis (mm)")
 
-            # Add colorbar and labels
-            plt.colorbar(mappable=nsOCT_image, shrink=1, label='Spatial Periods (nm)', ticks=[600, 620, 650, 680])
-            plt.axis('on')
-            plt.title('nsOCT image')
-            plt.xlabel("X axis (mm)")
-            plt.ylabel("Y axis (mm)")
-
-            # Save or display the plot
-            if do_save:
-                script_dir = os.path.dirname(__file__)
-                enface_dir = os.path.join(script_dir, enface_images)
-                plt.savefig(os.path.join(enface_dir, "{}ns.jpg".format(figN)), bbox_inches='tight', dpi = 300)
-                plt.clf()  # Clear the figure after saving
-            else:
-                plt.show()
-
-        # Plot OCT images
-        for OCT, figN in zip(enface_OCT, figure_number):
-            plt.figure()
-
-            # Rescale and normalize OCT data
-            OCTimage_rescaled = OCT - np.min(OCT)
-            OCTimage_rescaled_mean = np.mean(OCTimage_rescaled, axis=0)
-            OCTimage_rescaled_mean_savgol = savgol_filter(OCTimage_rescaled_mean, window_length=49, polyorder=2)
-            OCTimage_rescaled_background = OCTimage_rescaled_mean - OCTimage_rescaled_mean_savgol
-            OCT = OCTimage_rescaled - OCTimage_rescaled_background
-
-            print("The minimum and maximum intensity are", np.min(OCT), np.max(OCT))
-
-            # Display OCT image
-            OCT_image = plt.imshow(OCT, cmap='Greys_r', aspect=en_face_aspect_ratio, interpolation='none',
-                                   vmin=OCT_image_intensity_range[0], vmax=OCT_image_intensity_range[1],
-                                   extent=[selected_X_dim_1, selected_X_dim_2,
-                                           selected_Y_dimension_2, selected_Y_dimension_1])
-
-            # Save or display the plot
-            if do_save:
-                script_dir = os.path.dirname(__file__)
-                enface_dir = os.path.join(script_dir, enface_images)
-                plt.savefig(os.path.join(enface_dir, "{}.jpg".format(figN)), bbox_inches='tight', dpi = 300)
-                plt.clf()  # Clear the figure after saving
-            else:
-                plt.show()
+        if do_save:
+            oct_save_path = enface_dir / f"{fign}.jpg"
+            plt.savefig(oct_save_path, bbox_inches='tight', dpi=300)
+            plt.clf()
+        elif do_plot:
+            plt.show()
