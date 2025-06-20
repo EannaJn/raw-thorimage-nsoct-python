@@ -47,7 +47,7 @@ def _load_apodization_and_chirp(unzipped_folder_dir, number_of_a_lines, number_o
 
 def _process_b_frame(
     b_frame_number, unzipped_folder_dir, number_of_a_lines, number_of_pixels,
-    apodization_a_lines, chirp_data, params, oversampling_degree
+    apodization_a_lines, chirp_data, params
 ):
     """Processes a single B-frame and returns processed OCT and nsOCT arrays."""
     b_frame_path = os.path.join(unzipped_folder_dir, f"data\Spectral{b_frame_number}.data")
@@ -91,8 +91,8 @@ def _process_b_frame(
         mode='constant'
     )
     tukey_windows = np.array([
-        np.roll(tukey_window_full, int(i * abs(pixels_per_window) / oversampling_degree))
-        for i in range(num_window * oversampling_degree)
+        np.roll(tukey_window_full, int(i * abs(pixels_per_window)))
+        for i in range(num_window)
     ]).T
 
     for aline in apodized_data:
@@ -140,8 +140,6 @@ def oct_ns_oct_processing(f_name):
     search_path = os.path.join(b_frames_ns_oct_dir, 'nsOCT_1.npy')
     is_exist = os.path.exists(search_path)
 
-    oversampling_degree = Params.get('oversampling_degree', 1)
-
     if not is_exist:
         output_subfolders = [
             'b_frame_images', 'enface_images', 'b_frame_histograms', 'enface_histograms', 'full_data_flattened'
@@ -173,7 +171,7 @@ def oct_ns_oct_processing(f_name):
             print(f'Processing B-frame {b_frame_number}...')
             b_frame_oct, b_frame_ns_oct = _process_b_frame(
                 b_frame_number, unzipped_folder_dir, number_of_a_lines, number_of_pixels,
-                apodization_a_lines, chirp_data, Params, oversampling_degree
+                apodization_a_lines, chirp_data, Params
             )
             np.save(os.path.join(b_frames_oct_dir, f'OCT_{b_frame_number}.npy'), b_frame_oct)
             np.save(os.path.join(b_frames_ns_oct_dir, f'nsOCT_{b_frame_number}.npy'), b_frame_ns_oct)
