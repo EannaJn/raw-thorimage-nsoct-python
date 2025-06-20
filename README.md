@@ -6,8 +6,8 @@ it from the Fourier domain to image domain, and map each voxel of the 3D image. 
 
 ### Repo Contents:
 
-- Processing on OCT signal and performing nsOCT processing on the spectral information found in raw data
-- Plotting of OCT signal and nsOCT data to generate B-framess and en-face image
+- Process OCT signal and performing nsOCT processing on the spectral information found in raw data
+- Plot OCT and nsOCT data to generate B-framess and en-face image
 - Find the mean and standard deviation of mean values for each B-frame and en-face images
 - Plot histograms, depth plots, and flattended plot of entire data
 - Dictionary of parameters and main program scripts
