@@ -2,7 +2,7 @@
 
 This repo contains all the necessary python scripts to peform the original nanosesitive OCT (nsOCT) algorithm. This reclaims high axial spatial frequency information that is 
 lost after Fourier transformation of the spectral densitiy of the OCT signal. This is achieved by spectrally encoding the spatial frequency information through spectral diversity, translate
-it from the Fourier domain to image domain, and map each voxel of the 2D image. In this case, the dominant spatial frequency of each voxel is taken.
+it from the Fourier domain to image domain, and map each voxel of the 3D image. In this case, the dominant spatial frequency of each voxel is taken.
 
 ### Repo Contents:
 
