@@ -3,301 +3,265 @@ import matplotlib.pyplot as plt
 import scipy.fftpack as spfft
 import scipy.signal as sg
 from scipy import interpolate as ip
-from scipy.fftpack import fft, fftshift, ifft,ifftshift
-import os as os
-import os.path
+from scipy.fftpack import fft
+import os
 import Params
 import zipfile
 import xmltodict
-from Params import*
-from scipy import ndimage as ndimage
+from Params import *
 from window_function import select_window
+from scipy import ndimage as ndimage
 
 
-def OCT_nsOCT_processing(f_name):
-    """ The path to the .OCT file """
+def _make_dirs(dirs):
+    """Utility to create directories if they do not exist."""
+    for d in dirs:
+        os.makedirs(d, exist_ok=True)
 
-    # Get the root directory and file name without extension
-    root_direc = os.path.split(f_name)[0]
+def _extract_oct_zip(f_name, extract_path):
+    """Extracts the .oct zip file to the specified directory."""
+    with zipfile.ZipFile(file=f_name, mode='r') as file:
+        file.extractall(path=extract_path)
+
+def _parse_header(header_path):
+    """Parses the XML header and returns relevant imaging parameters."""
+    with open(header_path, 'r') as telestoheader:
+        xmlstring = telestoheader.read(-1)
+    xmldict = xmltodict.parse(xmlstring)
+    number_of_pixels = 2048
+    number_of_a_lines = int(xmldict['Ocity']['DataFiles']['DataFile'][3]['@SizeX'])
+    number_of_b_frames = int(xmldict['Ocity']['Image']['SizePixel']['SizeY'])
+    lateral_dimension_x = float(xmldict['Ocity']['Image']['SizeReal']['SizeX'])
+    lateral_dimension_y = float(xmldict['Ocity']['Image']['SizeReal']['SizeY'])
+    depth_in_mm = float(xmldict['Ocity']['Image']['SizeReal']['SizeZ'])
+    return number_of_pixels, number_of_a_lines, number_of_b_frames, lateral_dimension_x, lateral_dimension_y, depth_in_mm
+
+def _load_apodization_and_chirp(unzipped_folder_dir, number_of_a_lines, number_of_pixels):
+    """Loads apodization and chirp data from extracted files."""
+    apodization_array_path = os.path.join(unzipped_folder_dir, "data\Spectral0.data")
+    chirp_data_path = os.path.join(unzipped_folder_dir, "data\Chirp.data")
+    apodization_array = np.fromfile(apodization_array_path, dtype='u2', count=-1)
+    apodization_a_lines = apodization_array.reshape(number_of_a_lines, number_of_pixels)
+    chirp_data = np.fromfile(chirp_data_path, dtype='float32', count=-1)
+    return apodization_a_lines, chirp_data
+
+def _process_b_frame(
+    b_frame_number, unzipped_folder_dir, number_of_a_lines, number_of_pixels,
+    apodization_a_lines, chirp_data, params, oversampling_degree
+):
+    """Processes a single B-frame and returns processed OCT and nsOCT arrays."""
+    b_frame_path = os.path.join(unzipped_folder_dir, f"data\Spectral{b_frame_number}.data")
+    b_frame = np.fromfile(b_frame_path, dtype='u2', count=-1).reshape(number_of_a_lines, number_of_pixels)
+    mean_apo_spectrum = np.mean(apodization_a_lines, axis=0)
+    dc_removed = b_frame - mean_apo_spectrum
+
+    chirp_data_len = chirp_data.shape[0]
+    interpolation_array = np.linspace(0, chirp_data_len - 1, chirp_data_len)
+    interpolation_function = ip.interp1d(chirp_data, dc_removed, kind='linear', axis=1, fill_value="extrapolate")
+    linear_data = interpolation_function(interpolation_array)
+
+    # Apodization window
+    apodize_method = "Hann"
+    depth_index = np.arange(number_of_pixels) - number_of_pixels // 2
+    window_band = 0.3 * number_of_pixels
+    apodization_window = select_window(apodize_method, number_of_pixels, number_of_a_lines, depth_index, window_band)
+    apodized_data = np.multiply(linear_data, apodization_window.T)
+
+    # IFFT and normalization
+    data_after_ifft = 20 * np.log10(np.abs(spfft.ifft(apodized_data)))
+    prep_normalization = data_after_ifft + np.abs(np.min(data_after_ifft))
+    normalized_data = ((prep_normalization / np.amax(prep_normalization)) * 255).T
+
+    # nsOCT calculation
+    lower_wavelength = params['lower_wavelength']
+    upper_wavelength = params['upper_wavelength']
+    wavelength = np.linspace(lower_wavelength, upper_wavelength, number_of_pixels)
+    threshold = params['threshold']
+    refractive_index = params["refractive_index"]
+    hz = wavelength / (2 * refractive_index) * 1000  # nm
+    num_window = params['number_of_windows']
+    pixels_per_window = int(number_of_pixels / num_window)
+
+    index_max_n_win_fft_arr = []
+
+    tukey_window_short = sg.windows.tukey(pixels_per_window, alpha=0.75)
+    tukey_window_full = np.pad(
+        tukey_window_short,
+        pad_width=(0, number_of_pixels - pixels_per_window),
+        mode='constant'
+    )
+    tukey_windows = np.array([
+        np.roll(tukey_window_full, int(i * abs(pixels_per_window) / oversampling_degree))
+        for i in range(num_window * oversampling_degree)
+    ]).T
+
+    for aline in apodized_data:
+        n_window_fft = np.log10(np.abs(fft(aline[:, None] * tukey_windows, axis=0)))
+        n_window_fft = np.swapaxes(n_window_fft, 0, 1)
+        n_window_fft[n_window_fft < threshold] = 0
+        n_window_fft = ndimage.median_filter(n_window_fft, size=(4, 4))
+        index_of_max_in_n_window_fft = np.argmax(n_window_fft, axis=0)
+        index_max_n_win_fft_arr.append(index_of_max_in_n_window_fft)
+
+    win4 = np.array(index_max_n_win_fft_arr).T
+    win5a = []
+    for w in win4.T:
+        win5a.append(hz[np.round(w * int(abs(pixels_per_window))).astype(int)])
+    win5 = np.array(win5a).T
+
+    b_frame_oct = np.asarray(normalized_data, dtype=np.float32)
+    b_frame_ns_oct = np.asarray(win5, dtype=np.float32)
+    return b_frame_oct, b_frame_ns_oct
+
+def oct_ns_oct_processing(f_name):
+    """
+    Reads a raw .oct file, unzips all data, performs
+    OCT and nsOCT processing, and saves data for plotting.
+
+    Args:
+        f_name (str): raw .oct file name and path
+
+    Returns:
+        three_d_oct: Processed 3D OCT data
+        three_d_ns_oct: Processed 3D nsOCT data
+        compute_bins: bins to be used for histograms
+    """
+    root_dir = os.path.split(f_name)[0]
     file_base_name = os.path.splitext(os.path.split(f_name)[1])[0]
-
-    # Create unique directories for each file based on the file name
-    output_base_dir = os.path.join(root_direc, file_base_name)
-
-    # Create unique subdirectories for the current file's outputs
-    processed_data_dir = os.path.join(output_base_dir, "Processed_from_original_data")
-    re_processed_data_dir = os.path.join(output_base_dir, "Re-processed_from_original_data")
-
+    output_base_dir = os.path.join(root_dir, file_base_name)
+    processed_data_dir = os.path.join(output_base_dir, "processed_data")
+    re_processed_data_dir = os.path.join(output_base_dir, "re_processed_data")
     unzipped_folder_dir = os.path.join(output_base_dir, "unzipped_folder")
-    b_frames_OCT_dir = os.path.join(output_base_dir, "b_frames_OCT")
-    b_frames_nsOCT_dir = os.path.join(output_base_dir, "b_frames_nsOCT")
+    b_frames_oct_dir = os.path.join(output_base_dir, "b_frames_OCT")
+    b_frames_ns_oct_dir = os.path.join(output_base_dir, "b_frames_nsOCT")
 
-    os.makedirs(processed_data_dir, exist_ok=True)
-    os.makedirs(unzipped_folder_dir, exist_ok=True)
-    os.makedirs(b_frames_OCT_dir, exist_ok=True)
-    os.makedirs(b_frames_nsOCT_dir, exist_ok=True)
+    _make_dirs([processed_data_dir, unzipped_folder_dir, b_frames_oct_dir, b_frames_ns_oct_dir])
 
-    search_path = os.path.join(b_frames_nsOCT_dir, 'nsOCT_1.npy')
+    search_path = os.path.join(b_frames_ns_oct_dir, 'nsOCT_1.npy')
     is_exist = os.path.exists(search_path)
 
+    oversampling_degree = Params.get('oversampling_degree', 1)
+
     if not is_exist:
-        # Continue with file processing for this unique file
-        output_subfolders = ['B_frame_images', 'enface_images', 'B_frame_histograms', 'enface_histograms',
-                             'Full_data_flattened']
-        for osf in output_subfolders:
-            os.makedirs(os.path.join(processed_data_dir, osf), exist_ok=True)
+        output_subfolders = [
+            'b_frame_images', 'enface_images', 'b_frame_histograms', 'enface_histograms', 'full_data_flattened'
+        ]
+        subfolder_paths = [os.path.join(processed_data_dir, osf) for osf in output_subfolders]
+        _make_dirs(subfolder_paths)
+        b_frame_images, enface_images, b_frame_histograms, enface_histograms, full_data_flattened = subfolder_paths
 
-        # Paths to output subdirectories for this file
-        B_frame_images = os.path.join(processed_data_dir, output_subfolders[0])
-        enface_images = os.path.join(processed_data_dir, output_subfolders[1])
-        B_frame_histograms = os.path.join(processed_data_dir, output_subfolders[2])
-        enface_histograms = os.path.join(processed_data_dir, output_subfolders[3])
-        Full_data_flattened = os.path.join(processed_data_dir, output_subfolders[4])
+        _extract_oct_zip(f_name, unzipped_folder_dir)
+        header = os.path.join(unzipped_folder_dir, "Header.xml")
+        number_of_pixels, number_of_a_lines, number_of_b_frames, lateral_dimension_x, lateral_dimension_y, depth_in_mm = _parse_header(header)
+        apodization_a_lines, chirp_data = _load_apodization_and_chirp(unzipped_folder_dir, number_of_a_lines, number_of_pixels)
 
-        with zipfile.ZipFile(file=f_name, mode='r') as file:
-            file.extractall(path=unzipped_folder_dir)
+        print(f"Number of pixels per A-line: {number_of_pixels}")
+        print(f"Number of A-lines per B-frame: {number_of_a_lines}")
+        print(f"Number of B-frames: {number_of_b_frames}")
+        print(f"Lateral dimension X: {lateral_dimension_x} mm")
+        print(f"Lateral dimension Y: {lateral_dimension_y} mm")
+        print(f"The imaging depth: {depth_in_mm} mm")
 
-        Header = os.path.join(unzipped_folder_dir,"Header.xml")
-        Chirp__Data = os.path.join(unzipped_folder_dir,"data\Chirp.data")
-        Apodization__array = os.path.join(unzipped_folder_dir,"data\Spectral0.data")
+        b_frames_to_process = Params["b_frames_to_process"]
+        a_lines_to_process = Params["a_lines_to_process"]
+        processing_b_frames = np.arange(b_frames_to_process[0], b_frames_to_process[1] + 1)
 
-        with open(Header, 'r') as telestoheader:
-            xmlstring = telestoheader.read(-1)
+        three_d_oct_list = []
+        three_d_ns_oct_list = []
 
-        xmldict = xmltodict.parse(xmlstring)
+        for b_frame_number in processing_b_frames:
+            print(f'Processing B-frame {b_frame_number}...')
+            b_frame_oct, b_frame_ns_oct = _process_b_frame(
+                b_frame_number, unzipped_folder_dir, number_of_a_lines, number_of_pixels,
+                apodization_a_lines, chirp_data, Params, oversampling_degree
+            )
+            np.save(os.path.join(b_frames_oct_dir, f'OCT_{b_frame_number}.npy'), b_frame_oct)
+            np.save(os.path.join(b_frames_ns_oct_dir, f'nsOCT_{b_frame_number}.npy'), b_frame_ns_oct)
+            three_d_oct_list.append(b_frame_oct)
+            three_d_ns_oct_list.append(b_frame_ns_oct)
 
-        Number_of_pixels = 2048
-        Number_of_A_lines = int(xmldict['Ocity']['DataFiles']['DataFile'][3]['@SizeX'])
-        Number_of_B_frames = int(xmldict['Ocity']['Image']['SizePixel']['SizeY'])
-        Lateral_dimension_X = float(xmldict['Ocity']['Image']['SizeReal']['SizeX'])
-        Lateral_dimension_Y = float(xmldict['Ocity']['Image']['SizeReal']['SizeY'])
-        Depth_in_mm = float(xmldict['Ocity']['Image']['SizeReal']['SizeZ'])
+        three_d_oct = np.asarray(three_d_oct_list, dtype=np.float32)
+        three_d_ns_oct = np.asarray(three_d_ns_oct_list, dtype=np.float32)
+        three_d_oct = three_d_oct[:, :, a_lines_to_process[0] - 1:a_lines_to_process[1]]
+        three_d_ns_oct = three_d_ns_oct[:, :, a_lines_to_process[0] - 1:a_lines_to_process[1]]
 
-        Apodization_array = np.fromfile(Apodization__array, dtype='u2', count=-1)
-        Apodization_A_lines = Apodization_array.reshape(Number_of_A_lines, Number_of_pixels)
-
-        Chirp_Data = np.fromfile(Chirp__Data, dtype='float32', count=-1)
-
-        print("Number of pixels is", Number_of_pixels,
-              "\nNumber of A-lines is", Number_of_A_lines,
-              "\nNumber of B-frames is", Number_of_B_frames,
-              "\nLateral dimension X is", Lateral_dimension_X,
-              "\nLateral dimension Y is", Lateral_dimension_Y,
-              "\nThe depth in mm is", Depth_in_mm)
-
-        B_frames_to_process = Params["B_frames_to_process"]
-        A_lines_to_process = Params["A_lines_to_process"]
-        processing_B_frames = np.arange(B_frames_to_process[0], B_frames_to_process[1] + 1)
-
-        for b_frame_number in processing_B_frames:
-            print('Processing B-frame {}...'.format(b_frame_number))
-
-            b__frame = os.path.join(unzipped_folder_dir,"data\Spectral{}.data".format(b_frame_number))
-
-            b_frame = np.fromfile(b__frame, dtype='u2', count=-1)
-            b_frame = b_frame.reshape(Number_of_A_lines, Number_of_pixels)
-
-            Mean_Apo_spectrum = np.array(np.mean(Apodization_A_lines, axis = 0))
-
-            DC_Removed = b_frame - Mean_Apo_spectrum
-
-            Chirp_Data_len = Chirp_Data.shape[0]
-            x = np.linspace(0,int(Chirp_Data_len-1),Chirp_Data_len)
-            interpolation_function = ip.interp1d(Chirp_Data, DC_Removed, kind = 'linear', axis = 1)
-            Linear_Data = interpolation_function(x)
-
-            # Apodization window
-            depth_index = np.arange(Number_of_pixels) - Number_of_pixels // 2
-            window_band = 0.3 * Number_of_pixels
-            Apodization_window = select_window("Cosine",Number_of_pixels,Number_of_A_lines,depth_index,window_band)
-            Apodized_data = np.multiply(Linear_Data, Apodization_window.T)
-
-            data = Apodized_data.T
-            #data = Linear_Data.T
-
-            data_after_ifft = 20 * np.log10(abs(spfft.ifft(Apodized_data)))
-            Prep_Normalization = data_after_ifft + abs(np.min(data_after_ifft))
-            Normalized_data = ((Prep_Normalization / (np.amax(Prep_Normalization))) * 255).T
-
-            Lower_wavelength = Params['Lower_wavelength']
-            Upper_wavelength = Params['Upper_wavelength']
-            Wavelength = np.linspace(Lower_wavelength,Upper_wavelength,Number_of_pixels)
-
-            Threshold = Params['Threshold']
-            Refractive_index = Params["Refractive_index"]
-            Hz = Wavelength/(2*Refractive_index)*1000 ##unit: nm
-            num_window= Params['Number_of_windows']
-            Pixels_per_window = int(Number_of_pixels / num_window)
-
-            index_max_N_win_fft_arr = []
-
-            for Aline in data.T:
-                N_window_fft = [] # list to use append
-                tukey_window_short = sg.windows.tukey(Pixels_per_window, alpha=0.75) # create short tukey
-                tukey_window_full = np.pad(tukey_window_short, pad_width=(0,Number_of_pixels - Pixels_per_window), mode = 'constant') # pad to full length
-                for _ in range(0,num_window*oversampling_degree):
-                    N_window_fft.append(np.log10(abs((fft(Aline * tukey_window_full)))))
-                    tukey_window_full = np.roll(tukey_window_full, int(abs(Pixels_per_window/oversampling_degree)))
-                N_window_fft_wo_med_filter=np.array(N_window_fft)
-                N_window_fft = ndimage.median_filter(input=N_window_fft_wo_med_filter, size=(4, 4))
-                #N_window_fft = np.array(N_window_fft)
-                N_window_fft[N_window_fft < Threshold] = 0
-                index_of_max_in_N_window_fft = np.argmax(N_window_fft,axis=0)
-                index_max_N_win_fft_arr.append(index_of_max_in_N_window_fft)
-
-            Win4 = np.array(index_max_N_win_fft_arr).T
-            Win5a = []
-            for w in Win4.T:
-                #Win5a.append(Hz[np.round(w * int(abs(Pixels_per_window / oversampling_degree)) + int(
-                    #abs(Pixels_per_window / (2 * oversampling_degree))))])
-                Win5a.append(Hz[np.round(w * int(abs(Pixels_per_window)))])
-
-            Win5 = np.array(Win5a).T
-
-            b_frame_OCT = np.asarray((Normalized_data), dtype=np.float32)
-            b_frame_nsOCT = np.asarray((Win5), dtype=np.float32)
-
-            script_dir = os.path.dirname(__file__)
-            b_frames_OCT_dir = os.path.join(script_dir, b_frames_OCT_dir)
-            b_frames_nsOCT_dir = os.path.join(script_dir, b_frames_nsOCT_dir)
-
-            np.save(os.path.join(b_frames_OCT_dir, r'OCT_{}.npy').format(b_frame_number), b_frame_OCT)
-            np.save(os.path.join(b_frames_nsOCT_dir ,r'nsOCT_{}.npy').format(b_frame_number), b_frame_nsOCT)
-
-
-        three_d_OCT_list = []
-        three_d_nsOCT_list = []
-
-        for i in processing_B_frames:
-            OCT_bf = np.load(b_frames_OCT_dir + r'/OCT_{}.npy'.format(b_frame_number))
-            three_d_OCT_list.append(OCT_bf)
-
-        for i in processing_B_frames:
-            nsOCT_bf = np.load(b_frames_nsOCT_dir + r'/nsOCT_{}.npy'.format(b_frame_number))
-            three_d_nsOCT_list.append(nsOCT_bf)
-
-        three_d_OCT = np. asarray((three_d_OCT_list), dtype = np.float32)
-        three_d_nsOCT = np.asarray((three_d_nsOCT_list), dtype = np.float32)
-
-        three_d_OCT = three_d_OCT[:, :, A_lines_to_process[0]-1:A_lines_to_process[1]]
-        three_d_nsOCT = three_d_nsOCT[:, :, A_lines_to_process[0] - 1:A_lines_to_process[1]]
-
-        #compute_bins_prep = np.unique(three_d_nsOCT)
-        compute_bins_prep = np.linspace(np.min(three_d_nsOCT),np.max(three_d_nsOCT),101)
+        compute_bins_prep = np.linspace(np.min(three_d_ns_oct), np.max(three_d_ns_oct), 101)
         compute_bins = np.sort(compute_bins_prep)[1:]
+        threshold_spatial_period = np.min(three_d_ns_oct)
 
-        threshold_spatial_period = np.min(three_d_nsOCT)
+        print(f"The dimension of three_d_oct is {three_d_oct.shape}")
+        print(f"The dimension of three_d_ns_oct is {three_d_ns_oct.shape}")
+        print(f"The minimum spatial period is {np.min(three_d_ns_oct)}")
+        print(f"The maximum spatial period is {np.max(three_d_ns_oct)}")
+        print(f"The number of elements in the bins sequence: {len(compute_bins)}")
 
-
-        print("The dimension of three_d_OCT is", np.shape(three_d_OCT))
-        print("The dimension of three_d_nsOCT is", np.shape(three_d_nsOCT))
-        print("The minimum spatial period is", np.min(three_d_nsOCT))
-        print("The maximum spatial period is", np.max(three_d_nsOCT))
-        print("the number of elements in the bins sequence", len(compute_bins))
-
-    if is_exist == True:
+    else:
         print("Data already processed")
-        # Continue with file processing for this unique file
-        output_subfolders = ['B_frame_images', 'enface_images', 'B_frame_histograms', 'enface_histograms',
-                             'Full_data_flattened', 'OCT_B_frames', 'OCT_enface_images']
-        for osf in output_subfolders:
-            os.makedirs(os.path.join(re_processed_data_dir, osf), exist_ok=True)
+        output_subfolders = [
+            'b_frame_images', 'enface_images', 'b_frame_histograms', 'enface_histograms',
+            'full_data_flattened'
+        ]
+        subfolder_paths = [os.path.join(re_processed_data_dir, osf) for osf in output_subfolders]
+        _make_dirs(subfolder_paths)
+        b_frame_images, enface_images, b_frame_histograms, enface_histograms, full_data_flattened = subfolder_paths
 
-        # Paths to output subdirectories for this file
-        B_frame_images = os.path.join(re_processed_data_dir, output_subfolders[0])
-        enface_images = os.path.join(re_processed_data_dir, output_subfolders[1])
-        B_frame_histograms = os.path.join(re_processed_data_dir, output_subfolders[2])
-        enface_histograms = os.path.join(re_processed_data_dir, output_subfolders[3])
-        Full_data_flattened = os.path.join(re_processed_data_dir, output_subfolders[4])
-        oct_B_frames = os.path.join(re_processed_data_dir, output_subfolders[5])
-        oct_enface_images = os.path.join(re_processed_data_dir, output_subfolders[6])
+        _extract_oct_zip(f_name, unzipped_folder_dir)
+        header = os.path.join(unzipped_folder_dir, "Header.xml")
+        number_of_pixels, number_of_a_lines, number_of_b_frames, lateral_dimension_x, lateral_dimension_y, depth_in_mm = _parse_header(header)
 
-        with zipfile.ZipFile(file=f_name, mode='r') as file:
-            file.extractall(path=unzipped_folder_dir)
+        Params.update({"oct_b_frames": b_frame_images})
 
-        Header = os.path.join(unzipped_folder_dir, "Header.xml")
+        print(f"Number of pixels: {number_of_pixels}")
+        print(f"Number of A-lines: {number_of_a_lines}")
+        print(f"Number of B-frames: {number_of_b_frames}")
+        print(f"Lateral dimension X: {lateral_dimension_x}")
+        print(f"Lateral dimension Y: {lateral_dimension_y}")
+        print(f"The depth in mm: {depth_in_mm}")
 
-        with open(Header, 'r') as telestoheader:
-            xmlstring = telestoheader.read(-1)
+        b_frames_to_process = Params["b_frames_to_process"]
+        a_lines_to_process = Params["a_lines_to_process"]
+        processing_b_frames = np.arange(b_frames_to_process[0], b_frames_to_process[1] + 1)
 
-        xmldict = xmltodict.parse(xmlstring)
+        three_d_oct_list = []
+        three_d_ns_oct_list = []
 
-        Number_of_pixels = 2048
-        Number_of_A_lines = int(xmldict['Ocity']['DataFiles']['DataFile'][3]['@SizeX'])
-        Number_of_B_frames = int(xmldict['Ocity']['Image']['SizePixel']['SizeY'])
-        Lateral_dimension_X = float(xmldict['Ocity']['Image']['SizeReal']['SizeX'])
-        Lateral_dimension_Y = float(xmldict['Ocity']['Image']['SizeReal']['SizeY'])
-        Depth_in_mm = float(xmldict['Ocity']['Image']['SizeReal']['SizeZ'])
+        for b_frame_number in processing_b_frames:
+            oct_bf = np.load(os.path.join(b_frames_oct_dir, f'OCT_{b_frame_number}.npy'))
+            three_d_oct_list.append(oct_bf)
+            ns_oct_bf = np.load(os.path.join(b_frames_ns_oct_dir, f'nsOCT_{b_frame_number}.npy'))
+            three_d_ns_oct_list.append(ns_oct_bf)
 
-        for osf in output_subfolders:
-            os.makedirs(os.path.join(re_processed_data_dir, osf), exist_ok=True)
+        three_d_oct = np.asarray(three_d_oct_list, dtype=np.float32)
+        three_d_ns_oct = np.asarray(three_d_ns_oct_list, dtype=np.float32)
+        three_d_oct = three_d_oct[:, :, a_lines_to_process[0] - 1:a_lines_to_process[1]]
+        three_d_ns_oct = three_d_ns_oct[:, :, a_lines_to_process[0] - 1:a_lines_to_process[1]]
 
-        Params.update({"oct_B_frames": oct_B_frames,
-                       "oct_enface_images": oct_enface_images})
+        print(f"The dimensions of OCT file loaded: {three_d_oct.shape}")
+        print(f"The dimensions of nsOCT file loaded: {three_d_ns_oct.shape}")
 
-        print("Number of pixels is", Number_of_pixels,
-              "\nNumber of A-lines is", Number_of_A_lines,
-              "\nNumber of B-frames is", Number_of_B_frames,
-              "\nLateral dimension X is", Lateral_dimension_X,
-              "\nLateral dimension Y is", Lateral_dimension_Y,
-              "\nThe depth in mm is", Depth_in_mm)
+        threshold_spatial_period = np.min(three_d_ns_oct)
+        print(f"The minimum spatial period is {np.min(three_d_ns_oct)}")
+        print(f"The maximum spatial period is {np.max(three_d_ns_oct)}")
 
-        B_frames_to_process = Params["B_frames_to_process"]
-        A_lines_to_process = Params["A_lines_to_process"]
-
-        # three_d_OCT = np.load(file = path_to_OCT_file)
-        # three_d_nsOCT = np.load(file = f_name)
-
-        three_d_OCT_list = []
-        three_d_nsOCT_list = []
-
-        processing_B_frames = np.arange(B_frames_to_process[0], B_frames_to_process[1] + 1)
-        b_frames_OCT = os.path.join(file_base_name, "b_frames_OCT")
-        b_frames_nsOCT = os.path.join(file_base_name, "b_frames_nsOCT")
-
-        for b_frame_number in processing_B_frames:
-            OCT_bf = np.load(b_frames_OCT_dir + r'/OCT_{}.npy'.format(b_frame_number))
-            three_d_OCT_list.append(OCT_bf)
-
-        for b_frame_number in processing_B_frames:
-            nsOCT_bf = np.load(b_frames_nsOCT_dir + r'/nsOCT_{}.npy'.format(b_frame_number))
-            three_d_nsOCT_list.append(nsOCT_bf)
-
-        three_d_OCT = np.asarray((three_d_OCT_list), dtype=np.float32)
-        three_d_nsOCT = np.asarray((three_d_nsOCT_list), dtype=np.float32)
-
-        three_d_OCT = three_d_OCT[:, :, A_lines_to_process[0] - 1:A_lines_to_process[1]]
-        three_d_nsOCT = three_d_nsOCT[:, :, A_lines_to_process[0] - 1:A_lines_to_process[1]]
-
-        print("The dimensions of OCT file loaded ", np.shape(three_d_OCT))
-        print("The dimensions of nsOCT file loaded ", np.shape(three_d_nsOCT))
-
-        threshold_spatial_period = np.min(three_d_nsOCT)
-
-        print("The minimum spatial period is", np.min(three_d_nsOCT))
-        print("The maximum spatial period is", np.max(three_d_nsOCT))
-
-        compute_bins_prep = np.unique(three_d_nsOCT)
+        compute_bins_prep = np.unique(three_d_ns_oct)
         compute_bins = np.sort(compute_bins_prep)[1:]
+        print(f"The number of elements in the bins sequence: {len(compute_bins)}")
+        print(f"The minimum and maximum in the bins sequence are {np.min(compute_bins)}, {np.max(compute_bins)}")
 
-        print("the number of elements in the bins sequence", len(compute_bins))
-        print("the minimum and maximum in the bins sequence are", np.min(compute_bins), np.max(compute_bins))
+    Params.update({
+        'number_of_pixels': number_of_pixels,
+        'number_of_a_lines': number_of_a_lines,
+        'number_of_b_frames': number_of_b_frames,
+        'lateral_dimension_x': lateral_dimension_x,
+        'lateral_dimension_y': lateral_dimension_y,
+        'depth_in_mm': depth_in_mm,
+        'b_frame_images': b_frame_images,
+        'enface_images': enface_images,
+        'full_data_flattened': full_data_flattened,
+        'b_frame_histograms': b_frame_histograms,
+        'threshold_spatial_period': threshold_spatial_period,
+        'enface_histograms': enface_histograms,
+        'is_exist': is_exist
+    })
 
-    Params.update({'Number_of_pixels': Number_of_pixels,
-                   'Number_of_A_lines': Number_of_A_lines,
-                   'Number_of_B_frames': Number_of_B_frames,
-                   'Lateral_dimension_X': Lateral_dimension_X,
-                   'Lateral_dimension_Y': Lateral_dimension_Y,
-                   'Depth_in_mm': Depth_in_mm,
-                   'B_frame_images': B_frame_images,
-                   'enface_images': enface_images,
-                   'Full_data_flattened': Full_data_flattened,
-                   'B_frame_histograms': B_frame_histograms,
-                   'threshold_spatial_period': threshold_spatial_period,
-                   'enface_histograms': enface_histograms,
-                   'is_exist': is_exist})
-
-    return (three_d_OCT, three_d_nsOCT, compute_bins)
-
-
-
+    return three_d_oct, three_d_ns_oct, compute_bins
