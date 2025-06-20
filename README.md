@@ -1,6 +1,6 @@
 # Nanosensitive Optical Coherence Tomography Python Scripts
 
-This repo contains all the necessary python scripts to peform the original nanosesitive OCT (nsOCT) algorithm using Thorlabs native .oct file format which contains raw spectral, chirp offset, and apodization data as well as a header file that contains all imaging paramters used. This algorithm reclaims high axial spatial frequency information that is 
+This repo contains all the necessary python scripts to peform the original nanosesitive OCT (nsOCT) algorithm using Thorlabs native .oct file format which contains raw spectral, chirp, offset, and apodization data as well as a header file that contains all imaging paramters used. This algorithm reclaims high axial spatial frequency information that is 
 lost after Fourier transformation of the spectral densitiy of the OCT signal. This is achieved by spectrally encoding the spatial frequency information through spectral diversity, translate
 it from the Fourier domain to image domain, and map each voxel of the 3D image. In this case, the dominant spatial frequency of each voxel is taken.
 
