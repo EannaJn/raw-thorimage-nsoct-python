@@ -1,7 +1,6 @@
-f_name = ["/Users/tomi/Desktop/3D_nsOCT_code/oct_data/3D_healthy_0004_Mode3D.oct"]
-number_of_windows = 12  # zones for nsOCT
+f_name = [""]
+number_of_windows = 10  # zones for nsOCT
 threshold = 2.2
-oversampling_degree = 1  # read paper by Zhou et al. 2019
 b_frames_to_process = [1,10]
 a_lines_to_process = [1,500]
 lower_wavelength = 1.180
