@@ -12,3 +12,9 @@ it from the Fourier domain to image domain, and map each voxel of the 3D image. 
 - Plot histograms, depth plots, and flattended plot of entire data
 - Dictionary of parameters and main program scripts
 - A windowing script that contains various different window functions for OCT processing
+
+### How to use:
+Edit Params.py script to match specifications of OCT system being used and imaging sample
+Load in file(s) through f_name found in Params.py
+Select which scripts to run in Main_Program.py
+
