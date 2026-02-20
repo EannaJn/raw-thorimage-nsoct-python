@@ -11,6 +11,8 @@ import xmltodict
 from Params import *
 from window_function import select_window
 from scipy import ndimage as ndimage
+from scipy.ndimage import median_filter
+
 
 
 def _make_dirs(dirs):
@@ -49,69 +51,156 @@ def _process_b_frame(
     b_frame_number, unzipped_folder_dir, number_of_a_lines, number_of_pixels,
     apodization_a_lines, chirp_data, params
 ):
-    """Processes a single B-frame and returns processed OCT and nsOCT arrays."""
-    b_frame_path = os.path.join(unzipped_folder_dir, f"data\Spectral{b_frame_number}.data")
-    b_frame = np.fromfile(b_frame_path, dtype='u2', count=-1).reshape(number_of_a_lines, number_of_pixels)
-    mean_apo_spectrum = np.mean(apodization_a_lines, axis=0)
-    dc_removed = b_frame - mean_apo_spectrum
+    """Processes a single B-frame and returns processed OCT and nsOCT arrays (MATLAB Script 1 matched)."""
 
-    chirp_data_len = chirp_data.shape[0]
-    interpolation_array = np.linspace(0, chirp_data_len - 1, chirp_data_len)
-    interpolation_function = ip.interp1d(chirp_data, dc_removed, kind='linear', axis=1, fill_value="extrapolate")
-    linear_data = interpolation_function(interpolation_array)
+    # -----------------------
+    # Load + DC removal (same idea as Script 1 Apodata_mean subtraction)
+    # -----------------------
+    b_frame_path = os.path.join(unzipped_folder_dir, f"data\\Spectral{b_frame_number}.data")
+    b_frame = np.fromfile(b_frame_path, dtype='u2', count=-1).reshape(number_of_a_lines, number_of_pixels).astype(np.float32)
 
-    # Apodization window
-    apodize_method = "Hann"
-    depth_index = np.arange(number_of_pixels) - number_of_pixels // 2
-    window_band = 0.3 * number_of_pixels
-    apodization_window = select_window(apodize_method, number_of_pixels, number_of_a_lines, depth_index, window_band)
-    apodized_data = np.multiply(linear_data, apodization_window.T)
+    mean_apo_spectrum = np.mean(apodization_a_lines.astype(np.float32), axis=0)  # shape (N,)
+    dc_removed = b_frame - mean_apo_spectrum[None, :]  # shape (A_lines, N)
 
-    # IFFT and normalization
-    data_after_ifft = 20 * np.log10(np.abs(spfft.ifft(apodized_data)))
-    prep_normalization = data_after_ifft + np.abs(np.min(data_after_ifft))
-    normalized_data = ((prep_normalization / np.amax(prep_normalization)) * 255).T
+    # -----------------------
+    # k-linearisation (match Script 1)
+    # Script 1:
+    #   K = k2 - Chirp*0.000436415
+    #   k = linspace(k2,k1,2048)
+    #   interp1(K, fringe, k, 'spline')
+    # -----------------------
+    k1 = 4.4463
+    k2 = 5.3396
+    K = (k2 - chirp_data.astype(np.float32) * 0.000436415)  # shape (N,)
+    k_uniform = np.linspace(k2, k1, number_of_pixels).astype(np.float32)  # shape (N,)
 
-    # nsOCT calculation
-    lower_wavelength = params['lower_wavelength']
-    upper_wavelength = params['upper_wavelength']
-    wavelength = np.linspace(lower_wavelength, upper_wavelength, number_of_pixels)
+    # interp1d needs strictly increasing x; Script 1's K can be decreasing depending on chirp.
+    # So sort K and apply same permutation to spectra before interpolation.
+    sort_idx = np.argsort(K)
+    K_sorted = K[sort_idx]
+
+    # Reorder spectra along pixel axis to match sorted K
+    dc_sorted = dc_removed[:, sort_idx]  # (A_lines, N)
+
+    # Spline interpolation along pixel axis (axis=1) onto uniform k grid
+    interp_fun = ip.interp1d(
+        K_sorted, dc_sorted,
+        kind='cubic', axis=1,
+        bounds_error=False, fill_value="extrapolate",
+        assume_sorted=True
+    )
+    spec_lin = interp_fun(k_uniform)  # (A_lines, N)
+
+    # -----------------------
+    # Apodization window BEFORE IFFT (match Script 1)
+    # Script 1 uses: w = cos(pi*depth_index/index_length) replicated across A-lines
+    # depth_index = (1:N) - round(N/2)
+    # -----------------------
+    depth_index = (np.arange(number_of_pixels) + 1) - int(round(number_of_pixels / 2))
+    w_cos = np.cos(np.pi * depth_index / number_of_pixels).astype(np.float32)  # (N,)
+    spec_lin = spec_lin * w_cos[None, :]
+
+    # -----------------------
+    # IFFT -> OCT amplitude (match Script 1: ifft along depth axis)
+    # Script 1: spec_fft = ifft(spec_lin,[],1); OCT_image = abs(spec_fft(1:image_depth,:))
+    # In Python your data is (A_lines, N) so ifft axis=1
+    # -----------------------
+    spec_fft = np.fft.ifft(spec_lin, axis=1)
+    OCT_image = np.abs(spec_fft)  # (A_lines, N)
+
+    # -----------------------
+    # Noise shaping / normalization (match Script 1)
+    # Script 1:
+    #   aver_fract=1/10; aver_pixel=round(image_depth*aver_fract)
+    #   level_noise = sum(OCT_image(end-aver_pixel:end,:))/(aver_pixel+1)
+    #   OCT_complex = OCT_image .* (1./level_noise) replicated down depth
+    # -----------------------
+    image_depth = number_of_pixels
+    aver_pixel = int(round(image_depth * 0.1))
+    tail = OCT_image[:, (image_depth - aver_pixel - 1):image_depth]  # last (aver_pixel+1) samples, (A_lines, tail_len)
+
+    # level_noise per A-line (Script 1 does per column; our columns are A-lines)
+    level_noise = np.sum(tail, axis=1) / (aver_pixel + 1)  # (A_lines,)
+    level_noise = np.maximum(level_noise, 1e-12)
+
+    # Normalize each A-line by its noise level
+    OCT_norm = OCT_image / level_noise[:, None]  # (A_lines, N)
+
+    Aline_max = np.max(OCT_norm)
+    Aline_max = max(Aline_max, 1e-12)
+
+    # -----------------------
+    # Log mapping to [0..255] (match Script 1)
+    # Script 1: OCT_log = (20*log10(OCT_complex/Aline_max)+dB_Range)/dB_Range*255;
+    # then Contrast/Brightness clip
+    # -----------------------
+    dB_Range = float(getattr(params, "db_range", 75)) if hasattr(params, "db_range") else 75.0
+    Contrast = float(getattr(params, "contrast", 1.0)) if hasattr(params, "contrast") else 1.0
+    Brightness = float(getattr(params, "brightness", 0.0)) if hasattr(params, "brightness") else 0.0
+
+    OCT_log = (20.0 * np.log10(OCT_norm / Aline_max + 1e-12) + dB_Range) / dB_Range * 255.0
+    OCT_display = Contrast * OCT_log + Brightness
+    OCT_display = np.clip(OCT_display, 0, 255).astype(np.uint8)  # (A_lines, N)
+
+    # Script 1: subtract column mean (mean across depth per A-line) and median filter [3 3]
+    # MATLAB line: OCT_display = OCT_display - ones(depth,1)*mean(OCT_display,1)
+    col_mean = np.mean(OCT_display, axis=1, keepdims=True).astype(np.float32)  # (A_lines,1)
+    OCT_display = (OCT_display.astype(np.float32) - col_mean)
+    OCT_display = np.clip(OCT_display, 0, 255).astype(np.uint8)
+
+    # 2D median filter
+    OCT_display = median_filter(OCT_display, size=(3, 3))
+
+    # Return OCT in the same orientation you used before (depth x A_lines)
+    b_frame_oct = OCT_display.T.astype(np.float32)  # (N, A_lines)
+
+    # -----------------------
+    # === nsOCT (keep your Script 1-style implementation) ===
+    # IMPORTANT: use spec_lin (cos-apodized, k-linearised) as nsOCT input to match MATLAB
+    # Your existing nsOCT uses linear_data; switch to spec_lin to match Script 1.
+    # -----------------------
     threshold = params['threshold']
     refractive_index = params["refractive_index"]
-    hz = wavelength / (2 * refractive_index) * 1000  # nm
     num_window = params['number_of_windows']
-    pixels_per_window = int(number_of_pixels / num_window)
+    pixels_per_window = number_of_pixels // num_window
+    half = number_of_pixels // 2
 
-    index_max_n_win_fft_arr = []
+    Fringe_nsOCT = spec_lin.T  # (N, A_lines) like MATLAB Fringe_nsOCT = spec_lin
 
-    tukey_window_short = sg.windows.tukey(pixels_per_window, alpha=0.75)
-    tukey_window_full = np.pad(
-        tukey_window_short,
-        pad_width=(0, number_of_pixels - pixels_per_window),
-        mode='constant'
-    )
-    tukey_windows = np.array([
-        np.roll(tukey_window_full, int(i * abs(pixels_per_window)))
-        for i in range(num_window)
-    ]).T
+    # HZ axis from chirp like Script 1 (your existing form)
+    k1_ns = 4.4463
+    K_ns = k1_ns + chirp_data.astype(np.float32) * 0.000436415
+    wavelength = (2 * np.pi / K_ns)[::-1]
+    hz = (wavelength / (2 * refractive_index)) * 1e3  # nm
 
-    for aline in apodized_data:
-        n_window_fft = np.log10(np.abs(fft(aline[:, None] * tukey_windows, axis=0)))
-        n_window_fft = np.swapaxes(n_window_fft, 0, 1)
-        n_window_fft[n_window_fft < threshold] = 0
-        n_window_fft = ndimage.median_filter(n_window_fft, size=(4, 4))
-        index_of_max_in_n_window_fft = np.argmax(n_window_fft, axis=0)
-        index_max_n_win_fft_arr.append(index_of_max_in_n_window_fft)
+    twin = sg.windows.tukey(pixels_per_window, alpha=0.75).astype(np.float32)
+    SpecC_C = np.zeros((half, number_of_a_lines, num_window), dtype=np.float32)
 
-    win4 = np.array(index_max_n_win_fft_arr).T
-    win5a = []
-    for w in win4.T:
-        win5a.append(hz[np.round(w * int(abs(pixels_per_window))).astype(int)])
-    win5 = np.array(win5a).T
+    for shr in range(num_window):
+        win = np.zeros(number_of_pixels, dtype=np.float32)
+        s = shr * pixels_per_window
+        e = s + pixels_per_window
+        win[s:e] = twin
 
-    b_frame_oct = np.asarray(normalized_data, dtype=np.float32)
-    b_frame_ns_oct = np.asarray(win5, dtype=np.float32)
+        spec = Fringe_nsOCT * win[:, None]  # (N, A_lines)
+        depth01 = np.fft.fftshift(np.fft.fft(spec, n=number_of_pixels, axis=0), axes=0)
+        amp = depth01[:half, :]
+
+        ii = np.log10(np.abs(amp) + 1e-12)
+        ii = ndimage.median_filter(ii, size=(4, 4))
+        SpecC_C[:, :, shr] = ii
+
+    SpecC_C[SpecC_C < threshold] = 0
+    zone_idx = np.argmax(SpecC_C, axis=2)
+
+    center_index = zone_idx * pixels_per_window + (pixels_per_window // 2)
+    center_index = np.clip(center_index, 0, len(hz) - 1).astype(int)
+
+    b_frame_ns_oct = hz[center_index]
+    b_frame_ns_oct = np.flipud(b_frame_ns_oct).astype(np.float32)
+
     return b_frame_oct, b_frame_ns_oct
+
 
 def oct_ns_oct_processing(f_name):
     """
